@@ -20,7 +20,7 @@ pub struct Jimp {
 
 pub unsafe fn jimp_boolean(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
-        #[link_name="jimp_boolean"]
+        #[link_name="jimp_bool"]
         pub fn jimp_boolean_raw(jimp: *mut Jimp) -> bool;
     }
     if jimp_boolean_raw(jimp) {
