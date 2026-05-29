@@ -106,6 +106,7 @@ pub mod libc {
         pub fn printf(fmt: *const c_char, ...) -> c_int;
         pub fn fprintf(stream: *mut FILE, fmt: *const c_char, ...) -> c_int;
         pub fn memset(dest: *mut c_void, byte: c_int, size: usize) -> c_int;
+        pub fn memcpy(dest: *mut c_void, src: *const c_void, size: usize) -> *mut c_void;
         pub fn isspace(c: c_int) -> c_int;
         pub fn isalpha(c: c_int) -> c_int;
         pub fn isalnum(c: c_int) -> c_int;
@@ -115,6 +116,7 @@ pub mod libc {
         pub fn toupper(c: c_int) -> c_int;
         pub fn qsort(base: *mut c_void, nmemb: usize, size: usize, compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int);
         pub fn dirname(path: *const c_char) -> *const c_char;
+        pub fn realpath(path: *const c_char, resolved_path: *mut c_char) -> *const c_char;
     }
 
     // count is the amount of items, not bytes

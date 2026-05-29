@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use core::ffi::*;
 use core::slice;
 use crate::crust::*;
@@ -167,6 +169,8 @@ extern "C" {
     pub fn copy_file(src_path: *const c_char, dst_path: *const c_char) -> bool;
     #[link_name = "nob_delete_file"]
     pub fn delete_file(path: *const c_char) -> bool;
+    #[link_name = "nob_temp_running_executable_path"]
+    pub fn temp_running_executable_path() -> *const c_char;
 }
 
 pub unsafe fn get_file_type(path: *const c_char) -> Option<File_Type> {
@@ -179,6 +183,7 @@ pub unsafe fn get_file_type(path: *const c_char) -> Option<File_Type> {
     Some((*FILE_TYPE_ORDER)[result as usize])
 }
 
+#[must_use]
 pub unsafe fn write_entire_file(path: *const c_char, data: *const c_void, size: usize) -> Option<()> {
     extern "C" {
         #[link_name = "nob_write_entire_file"]
@@ -191,6 +196,7 @@ pub unsafe fn write_entire_file(path: *const c_char, data: *const c_void, size: 
     }
 }
 
+#[must_use]
 pub unsafe fn read_entire_file(path: *const c_char, sb: *mut String_Builder) -> Option<()> {
     extern "C" {
         #[link_name = "nob_read_entire_file"]

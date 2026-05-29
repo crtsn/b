@@ -38,6 +38,8 @@ pub mod params;
 pub mod ir;
 pub mod time;
 pub mod shlex;
+pub mod codegen_common;
+pub mod errors;
 
 use core::ffi::*;
 use core::mem::zeroed;
@@ -50,11 +52,13 @@ use crust::libc::*;
 use crust::assoc_lookup_cstr;
 use arena::Arena;
 use targets::*;
-use lexer::{Lexer, Loc, Token};
+use lexer::{Lexer, Loc, Token, loc};
 use ir::*;
 use time::Instant;
 use shlex::*;
 use params::*;
+use crate::codegen_common::{parse_int_literal_to_u64, parse_char_literal_to_u64_le};
+use crate::errors::bump_error_count;
 
 pub unsafe fn add_libb_files(path: *const c_char, target: *const c_char, inputs: &mut Array<*const c_char>, c: *mut Compiler) -> Option<bool> {
     if !file_exists(path)? {
@@ -66,10 +70,11 @@ pub unsafe fn add_libb_files(path: *const c_char, target: *const c_char, inputs:
     Some(true)
 }
 
-pub unsafe fn expect_tokens(l: *mut Lexer, tokens: *const [Token]) -> Option<()> {
+#[must_use]
+pub unsafe fn expect_tokens(l: *mut Lexer, c: *mut Compiler, tokens: *const [Token]) -> Option<bool> {
     for i in 0..tokens.len() {
         if (*tokens)[i] == (*l).token {
-            return Some(());
+            return Some(true);
         }
     }
 
@@ -89,36 +94,57 @@ pub unsafe fn expect_tokens(l: *mut Lexer, tokens: *const [Token]) -> Option<()>
     diagf!((*l).loc, c!("ERROR: expected %s, but got %s\n"), sb.items, lexer::display_token((*l).token));
 
     free(sb.items);
-    None
+    bump_error_count(&mut (*c).error_count)?;
+    return Some(false);
 }
 
-pub unsafe fn expect_token(l: *mut Lexer, token: Token) -> Option<()> {
-    expect_tokens(l, &[token])
+#[must_use]
+pub unsafe fn expect_token(l: *mut Lexer, c: *mut Compiler, token: Token) -> Option<bool> {
+    expect_tokens(l, c, &[token])
 }
 
-pub unsafe fn get_and_expect_token(l: *mut Lexer, token: Token) -> Option<()> {
-    lexer::get_token(l)?;
-    expect_token(l, token)
-}
-
-pub unsafe fn get_and_expect_token_but_continue(l: *mut Lexer, c: *mut Compiler, token: Token) -> Option<()> {
-    let saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
-    if expect_token(l, token).is_none() {
-        (*l).parse_point = saved_point;
-        bump_error_count(c)
+#[must_use]
+pub unsafe fn get_and_expect_token(l: *mut Lexer, c: *mut Compiler, token: Token) -> Option<bool> {
+    if let Some(_) = lexer::get_next_valid_token(l)
+    {
+        expect_token(l, c, token)
     } else {
-        Some(())
+        bump_error_count(&mut (*c).error_count)?;
+        Some(false)
     }
 }
 
-pub unsafe fn get_and_expect_tokens(l: *mut Lexer, clexes: *const [Token]) -> Option<()> {
-    lexer::get_token(l)?;
-    expect_tokens(l, clexes)
+#[must_use]
+pub unsafe fn get_and_expect_token_but_continue(l: *mut Lexer, c: *mut Compiler, token: Token) -> Option<()> {
+    let saved_point = (*l).parse_point;
+    if let Some(_) = lexer::get_next_valid_token(l)
+    {
+        if expect_token(l, c, token).is_none() {
+            (*l).parse_point = saved_point;
+            bump_error_count(&mut (*c).error_count)
+        } else {
+            Some(())
+        }
+    } else {
+        bump_error_count(&mut (*c).error_count)?;
+        None
+    }
 }
 
-pub unsafe fn expect_token_id(l: *mut Lexer, id: *const c_char) -> Option<()> {
-    expect_token(l, Token::ID)?;
+#[must_use]
+pub unsafe fn get_and_expect_tokens(l: *mut Lexer, c: *mut Compiler, clexes: *const [Token]) -> Option<bool> {
+    if let Some(_) = lexer::get_next_valid_token(l)
+    {
+        expect_tokens(l, c, clexes)
+    } else {
+        bump_error_count(&mut (*c).error_count)?;
+        Some(false)
+    }
+}
+
+#[must_use]
+pub unsafe fn expect_token_id(l: *mut Lexer, c: *mut Compiler, id: *const c_char) -> Option<()> {
+    expect_token(l, c, Token::ID)?;
     if strcmp((*l).string, id) != 0 {
         diagf!((*l).loc, c!("ERROR: expected `%s`, but got `%s`\n"), id, (*l).string);
         return None;
@@ -126,9 +152,10 @@ pub unsafe fn expect_token_id(l: *mut Lexer, id: *const c_char) -> Option<()> {
     Some(())
 }
 
-pub unsafe fn get_and_expect_token_id(l: *mut Lexer, id: *const c_char) -> Option<()> {
-    lexer::get_token(l)?;
-    expect_token_id(l, id)
+#[must_use]
+pub unsafe fn get_and_expect_token_id(l: *mut Lexer, c: *mut Compiler, id: *const c_char) -> Option<()> {
+    lexer::get_next_valid_token(l)?;
+    expect_token_id(l, c, id)
 }
 
 #[repr(C)]
@@ -182,13 +209,14 @@ pub unsafe fn find_var_deep(vars: *const Array<Array<Var>>, name: *const c_char)
     ptr::null()
 }
 
+#[must_use]
 pub unsafe fn declare_var(c: *mut Compiler, name: *const c_char, loc: Loc, storage: Storage) -> Option<()> {
     let scope = da_last_mut(&mut (*c).vars).expect("There should be always at least the global scope");
     let existing_var = find_var_near(scope, name);
     if !existing_var.is_null() {
         diagf!(loc, c!("ERROR: redefinition of variable `%s`\n"), name);
         diagf!((*existing_var).loc, c!("NOTE: the first declaration is located here\n"));
-        return bump_error_count(c);
+        return bump_error_count(&mut (*c).error_count);
     }
 
     if let Storage::Auto {index} = storage {
@@ -223,12 +251,13 @@ pub unsafe fn find_goto_label(labels: *const Array<GotoLabel>, name: *const c_ch
     ptr::null()
 }
 
+#[must_use]
 pub unsafe fn define_goto_label(c: *mut Compiler, name: *const c_char, loc: Loc, label: usize) -> Option<()> {
     let existing_label = find_goto_label(&(*c).func_goto_labels, name);
     if !existing_label.is_null() {
         diagf!(loc, c!("ERROR: duplicate label `%s`\n"), name);
         diagf!((*existing_label).loc, c!("NOTE: the first definition is located here\n"));
-        return bump_error_count(c);
+        return bump_error_count(&mut (*c).error_count);
     }
 
     da_append(&mut (*c).func_goto_labels, GotoLabel {name, loc, label});
@@ -328,22 +357,14 @@ pub unsafe fn allocate_auto_var(t: *mut AutoVarsAtor) -> usize {
 }
 
 
-pub unsafe fn compile_string(string: *const c_char, c: *mut Compiler) -> usize {
-    let offset = (*c).program.data.count;
-    let string_len = strlen(string);
-    da_append_many(&mut (*c).program.data, slice::from_raw_parts(string as *const u8, string_len));
-    // TODO: Strings in B are not NULL-terminated.
-    // They are terminated with symbol '*e' ('*' is escape character akin to '\' in C) which according to the
-    // spec is called just "end-of-file" without any elaboration on what its value is. Maybe it had a specific
-    // value on PDP that was a common knowledge at the time? In any case that breaks compatibility with
-    // libc. While the language is still in development we gonna terminate it with 0. We will make it
-    // "spec complaint" later.
-    da_append(&mut (*c).program.data, 0); // NULL-terminator
-    offset
+pub unsafe fn add_string(string: *const c_char, count: usize, c: *mut Compiler) -> usize {
+    let string_number = (*c).program.strings.count;
+    da_append(&mut (*c).program.strings, String {string, count});
+    string_number
 }
 
 pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Option<(Arg, bool)> {
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
     let arg = match (*l).token {
         Token::OParen => {
             let result = compile_expression(l, c)?;
@@ -364,13 +385,9 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
         }
         Token::Minus => {
             let (arg, _) = compile_primary_expression(l, c)?;
-            if let Arg::Literal(v) = arg {
-                Some((Arg::Literal(!v + 1), false))
-            } else {
-                let index = allocate_auto_var(&mut (*c).auto_vars_ator);
-                push_opcode(Op::Negate {result: index, arg}, (*l).loc, c);
-                Some((Arg::AutoVar(index), false))
-            }
+            let index = allocate_auto_var(&mut (*c).auto_vars_ator);
+            push_opcode(Op::Negate {result: index, arg}, (*l).loc, c);
+            Some((Arg::AutoVar(index), false))
         }
         Token::And => {
             let loc = (*l).loc;
@@ -378,7 +395,7 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
 
             if !is_lvalue {
                 diagf!(loc, c!("ERROR: cannot take the address of an rvalue\n"));
-                return bump_error_count(c).map(|()| (Arg::Bogus, false));
+                return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
             }
 
             match arg {
@@ -386,7 +403,7 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 Arg::External(name) =>  Some((Arg::RefExternal(name), false)),
                 Arg::AutoVar(index) =>  Some((Arg::RefAutoVar(index), false)),
                 Arg::Bogus          =>  Some((Arg::Bogus, false)), // Reference of a bogus value is a bogus value
-                Arg::Literal(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::String(_) |Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
         Token::PlusPlus => {
@@ -395,10 +412,10 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
 
             if !is_lvalue {
                 diagf!(loc, c!("ERROR: cannot increment an rvalue\n"));
-                return bump_error_count(c).map(|()| (Arg::Bogus, false));
+                return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
             }
 
-            compile_binop(arg, Arg::Literal(1), Binop::Plus, loc, c);
+            compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Plus, loc, c);
             Some((arg, false))
         }
         Token::MinusMinus => {
@@ -407,13 +424,21 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
 
             if !is_lvalue {
                 diagf!(loc, c!("ERROR: cannot decrement an rvalue\n"));
-                return bump_error_count(c).map(|()| (Arg::Bogus, false));
+                return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
             }
 
-            compile_binop(arg, Arg::Literal(1), Binop::Minus, loc, c);
+            compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Minus, loc, c);
             Some((arg, false))
         }
-        Token::CharLit | Token::IntLit => Some((Arg::Literal((*l).int_number), false)),
+        Token::CharLit => {
+            let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+            memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+            Some((Arg::CharLiteral(value as *const c_char, (*l).string_storage.count - 1), false))
+        }
+        Token::IntLit => {
+            let value = arena::strdup(&mut (*c).arena, (*l).string);
+            Some((Arg::IntLiteral(value, (*l).radix), false))
+        }
         Token::ID => {
             let name = arena::strdup(&mut (*c).arena, (*l).string);
 
@@ -429,8 +454,11 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
             }
         }
         Token::String => {
-            let offset = compile_string((*l).string, c);
-            Some((Arg::DataOffset(offset), false))
+            let count = (*l).string_storage.count - 1;
+            let value = arena::alloc(&mut (*c).arena, count);
+            memcpy(value, (*l).string as *const c_void, count);
+            let string_number = add_string(value as *const c_char, count, c);
+            Some((Arg::String(string_number), false))
         }
         _ => {
             diagf!((*l).loc, c!("Expected start of a primary expression but got %s\n"), lexer::display_token((*l).token));
@@ -442,7 +470,7 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
 
     loop {
         let saved_point = (*l).parse_point;
-        lexer::get_token(l)?;
+        lexer::get_next_valid_token(l)?;
 
         (arg, is_lvalue) = match (*l).token {
             Token::OParen => Some((compile_function_call(l, c, arg)?, false)),
@@ -459,12 +487,12 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 let loc = (*l).loc;
                 if !is_lvalue {
                     diagf!(loc, c!("ERROR: cannot increment an rvalue\n"));
-                    return bump_error_count(c).map(|()| (Arg::Bogus, false));
+                    return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
                 }
 
                 let pre = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::AutoAssign {index: pre, arg}, loc, c);
-                compile_binop(arg, Arg::Literal(1), Binop::Plus, loc, c);
+                compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Plus, loc, c);
 
                 Some((Arg::AutoVar(pre), false))
             }
@@ -472,12 +500,12 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 let loc = (*l).loc;
                 if !is_lvalue {
                     diagf!(loc, c!("ERROR: cannot decrement an rvalue\n"));
-                    return bump_error_count(c).map(|()| (Arg::Bogus, false));
+                    return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
                 }
 
                 let pre = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::AutoAssign {index: pre, arg}, loc, c);
-                compile_binop(arg, Arg::Literal(1), Binop::Minus, loc, c);
+                compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Minus, loc, c);
 
                 Some((Arg::AutoVar(pre), false))
             }
@@ -508,7 +536,7 @@ pub unsafe fn compile_binop(lhs: Arg, rhs: Arg, binop: Binop, loc: Loc, c: *mut 
         Arg::Bogus => {
             // Bogus value does not compile to anything
         }
-        Arg::Literal(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+        Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::String(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
     }
 }
 
@@ -520,7 +548,7 @@ pub unsafe fn compile_binop_expression(l: *mut Lexer, c: *mut Compiler, preceden
     let (mut lhs, mut lvalue) = compile_binop_expression(l, c, precedence + 1)?;
 
     let mut saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
 
     if let Some(binop) = Binop::from_token((*l).token) {
         if binop.precedence() == precedence {
@@ -536,7 +564,7 @@ pub unsafe fn compile_binop_expression(l: *mut Lexer, c: *mut Compiler, preceden
                 lvalue = false;
 
                 saved_point = (*l).parse_point;
-                lexer::get_token(l)?;
+                lexer::get_next_valid_token(l)?;
             }
         }
     }
@@ -549,7 +577,7 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
     let (lhs, mut lvalue) = compile_binop_expression(l, c, 0)?;
 
     let mut saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
 
     while let Some(binop) = Binop::from_assign_token((*l).token) {
         let binop_loc = (*l).loc;
@@ -557,7 +585,7 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
 
         if !lvalue {
             diagf!(binop_loc, c!("ERROR: cannot assign to rvalue\n"));
-            return bump_error_count(c).map(|()| (Arg::Bogus, false));
+            return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
         }
 
         if let Some(binop) = binop {
@@ -576,14 +604,14 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
                 Arg::Bogus => {
                     // Bogus value does not compile to anything
                 }
-                Arg::Literal(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::String(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
 
         lvalue = false;
 
         saved_point = (*l).parse_point;
-        lexer::get_token(l)?;
+        lexer::get_next_valid_token(l)?;
     }
 
     if (*l).token == Token::Question {
@@ -615,6 +643,7 @@ pub unsafe fn compile_expression(l: *mut Lexer, c: *mut Compiler) -> Option<(Arg
     compile_assign_expression(l, c)
 }
 
+#[must_use]
 pub unsafe fn compile_block(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
     let index = (*c).func_blocks_count;
     (*c).func_blocks_count += 1;
@@ -622,7 +651,7 @@ pub unsafe fn compile_block(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
 
     loop {
         let saved_point = (*l).parse_point;
-        lexer::get_token(l)?;
+        lexer::get_next_valid_token(l)?;
         if (*l).token == Token::CCurly { break }
         (*l).parse_point = saved_point;
 
@@ -635,17 +664,34 @@ pub unsafe fn compile_block(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
  unsafe fn compile_function_call(l: *mut Lexer, c: *mut Compiler, fun: Arg) -> Option<Arg> {
     let mut args: Array<Arg> = zeroed();
     let saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
     if (*l).token != Token::CParen {
         (*l).parse_point = saved_point;
         loop {
             let (expr, _) = compile_expression(l, c)?;
             da_append(&mut args, expr);
-            get_and_expect_tokens(l, &[Token::CParen, Token::Comma])?;
-            match (*l).token {
-                Token::CParen => break,
-                Token::Comma => continue,
-                _ => unreachable!(),
+
+            lexer::get_next_valid_token(l)?;
+            let mut next = expect_tokens(l, c, &[Token::CParen, Token::Comma])?;
+            if next {
+                match (*l).token {
+                    Token::CParen => break,
+                    Token::Comma => continue,
+                    _ => unreachable!(),
+                }
+            } else {
+                loop {
+                    lexer::get_next_valid_token(l)?;
+                    next = (*l).token == Token::CParen ||
+                           (*l).token == Token::Comma;
+                    if next {
+                        match (*l).token {
+                            Token::CParen => break,
+                            Token::Comma => continue,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
             }
         }
     }
@@ -664,14 +710,15 @@ pub unsafe fn name_declare_if_not_exists(names: *mut Array<*const c_char>, name:
     da_append(names, name)
 }
 
+#[must_use]
 pub unsafe fn compile_asm_stmts(l: *mut Lexer, c: *mut Compiler, stmts: *mut Array<AsmStmt>) -> Option<()> {
     get_and_expect_token_but_continue(l, c, Token::OParen)?;
     let saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
     if (*l).token != Token::CParen {
         (*l).parse_point = saved_point;
         loop {
-            get_and_expect_token(l, Token::String)?;
+            get_and_expect_token(l, c, Token::String)?;
             match (*l).token {
                 Token::String => {
                     let line = arena::strdup(&mut (*c).arena, (*l).string);
@@ -681,7 +728,7 @@ pub unsafe fn compile_asm_stmts(l: *mut Lexer, c: *mut Compiler, stmts: *mut Arr
                 _ => unreachable!(),
             }
 
-            get_and_expect_tokens(l, &[Token::Comma, Token::CParen])?;
+            get_and_expect_tokens(l, c, &[Token::Comma, Token::CParen])?;
             match (*l).token {
                 Token::Comma  => {}
                 Token::CParen => break,
@@ -693,9 +740,10 @@ pub unsafe fn compile_asm_stmts(l: *mut Lexer, c: *mut Compiler, stmts: *mut Arr
     Some(())
 }
 
+#[must_use]
 pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
     let saved_point = (*l).parse_point;
-    lexer::get_token(l)?;
+    lexer::get_next_valid_token(l)?;
 
     match (*l).token {
         Token::SemiColon => {
@@ -711,23 +759,56 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
         }
         Token::Extrn => {
             while (*l).token != Token::SemiColon {
-                get_and_expect_token(l, Token::ID)?;
+                get_and_expect_token(l, c, Token::ID)?;
                 let name = arena::strdup(&mut (*c).arena, (*l).string);
                 name_declare_if_not_exists(&mut (*c).program.extrns, name);
                 declare_var(c, name, (*l).loc, Storage::External {name})?;
-                get_and_expect_tokens(l, &[Token::SemiColon, Token::Comma])?;
+                get_and_expect_tokens(l, c, &[Token::SemiColon, Token::Comma])?;
             }
             compile_statement(l, c)
         }
         Token::Auto => {
-            while (*l).token != Token::SemiColon {
-                get_and_expect_token(l, Token::ID)?;
-                let name = arena::strdup(&mut (*c).arena, (*l).string);
-                let index = allocate_auto_var(&mut (*c).auto_vars_ator);
-                declare_var(c, name, (*l).loc, Storage::Auto {index})?;
-                get_and_expect_tokens(l, &[Token::SemiColon, Token::Comma, Token::IntLit, Token::CharLit])?;
+            'autovar: while (*l).token != Token::SemiColon {
+                let mut index = 0;
+                if get_and_expect_token(l, c, Token::ID)? {
+                    let name = arena::strdup(&mut (*c).arena, (*l).string);
+                    index = allocate_auto_var(&mut (*c).auto_vars_ator);
+                    declare_var(c, name, (*l).loc, Storage::Auto {index})?;
+
+                    lexer::get_next_valid_token(l)?;
+                }
+                    
+                let mut next = expect_tokens(l, c, &[Token::SemiColon, Token::Comma, Token::IntLit, Token::CharLit])?;
+                if !next {
+                    loop {
+                        lexer::get_next_valid_token(l)?;
+                        next = (*l).token == Token::SemiColon ||
+                               (*l).token == Token::Comma;
+                        if next {
+                            continue 'autovar;
+                        }
+                    }
+                }
                 if (*l).token == Token::IntLit || (*l).token == Token::CharLit {
-                    let size = (*l).int_number as usize;
+                    let size = if (*l).token == Token::IntLit {
+                        let value: u64;
+                        if let Some(v) = parse_int_literal_to_u64((*l).string, (*l).radix) {
+                            value = v;
+                        } else {
+                            diagf!(loc(l), c!("ERROR: Constant integer overflow.\n"));
+                            return None;
+                        }
+                        value
+                    } else {
+                        let value: u64;
+                        if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
+                            value = v;
+                        } else {
+                            diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
+                            return None;
+                        }
+                        value
+                    } as usize;
                     if size == 0 {
                         missingf!((*l).loc, c!("It's unclear how to compile automatic vector of size 0\n"));
                     }
@@ -739,7 +820,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                     //   See TODO(2025-06-05 17:45:36)
                     let arg = Arg::RefAutoVar(index + size);
                     push_opcode(Op::AutoAssign {index, arg}, (*l).loc, c);
-                    get_and_expect_tokens(l, &[Token::SemiColon, Token::Comma])?;
+                    get_and_expect_tokens(l, c, &[Token::SemiColon, Token::Comma])?;
                 }
             }
             compile_statement(l, c)
@@ -756,7 +837,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             compile_statement(l, c)?;
 
             let saved_point = (*l).parse_point;
-            lexer::get_token(l)?;
+            lexer::get_next_valid_token(l)?;
             if (*l).token == Token::Else {
                 let out_label = allocate_label_index(c);
                 push_opcode(Op::JmpLabel{label: out_label}, (*l).loc, c);
@@ -790,7 +871,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             Some(())
         }
         Token::Return => {
-            get_and_expect_tokens(l, &[Token::SemiColon, Token::OParen])?;
+            get_and_expect_tokens(l, c, &[Token::SemiColon, Token::OParen])?;
             if (*l).token == Token::SemiColon {
                 push_opcode(Op::Return {arg: None}, (*l).loc, c);
             } else if (*l).token == Token::OParen {
@@ -798,13 +879,11 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 get_and_expect_token_but_continue(l, c, Token::CParen)?;
                 get_and_expect_token_but_continue(l, c, Token::SemiColon)?;
                 push_opcode(Op::Return {arg: Some(arg)}, (*l).loc, c);
-            } else {
-                unreachable!();
             }
             Some(())
         }
         Token::Goto => {
-            get_and_expect_token(l, Token::ID)?;
+            get_and_expect_token(l, c, Token::ID)?;
             let name = arena::strdup(&mut (*c).arena, (*l).string);
             let loc = (*l).loc;
             let addr = (*c).func_body.count;
@@ -822,9 +901,28 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
         }
         Token::Case => {
             let case_loc = (*l).loc;
-            lexer::get_token(l);
-            expect_tokens(l, &[Token::IntLit, Token::CharLit])?; // TODO: String ??!
-            let case_value = (*l).int_number;
+            let _ = lexer::get_next_valid_token(l);
+            expect_tokens(l, c, &[Token::IntLit, Token::CharLit])?; // TODO: String ??!
+            let case_value = if (*l).token == Token::IntLit {
+                let value: u64;
+                if let Some(v) = parse_int_literal_to_u64((*l).string, (*l).radix) {
+                    value = v;
+                } else {
+                    diagf!(loc(l), c!("ERROR: Constant integer overflow.\n"));
+                    return None;
+                }
+                value
+            } else {
+                let value: u64;
+                if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
+                    value = v;
+                } else {
+                    diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
+                    return None;
+                }
+                value
+            };
+            let case_value = temp_sprintf(c!("%llu"), case_value);
             get_and_expect_token_but_continue(l, c, Token::Colon)?;
 
             if let Some(switch_frame) = da_last_mut(&mut (*c).switch_stack) {
@@ -839,7 +937,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                     binop: Binop::Equal,
                     index: (*switch_frame).cond,
                     lhs: (*switch_frame).value,
-                    rhs: Arg::Literal(case_value)
+                    rhs: Arg::IntLiteral(case_value, Radix::Dec)
                 }, case_loc, c);
 
                 let next_case_label = allocate_label_index(c);
@@ -854,7 +952,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 Some(())
             } else {
                 diagf!(case_loc, c!("ERROR: case label outside of switch\n"));
-                bump_error_count(c)
+                bump_error_count(&mut (*c).error_count)
             }
         }
         Token::Switch => {
@@ -881,7 +979,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             if (*l).token == Token::ID {
                 let name = arena::strdup(&mut (*c).arena, (*l).string);
                 let name_loc = (*l).loc;
-                lexer::get_token(l)?;
+                lexer::get_next_valid_token(l)?;
                 if (*l).token == Token::Colon {
                     let label = allocate_label_index(c);
                     push_opcode(Op::Label{label}, name_loc, c);
@@ -947,22 +1045,10 @@ pub struct UsedFunc {
     loc: Loc,
 }
 
-pub const MAX_ERROR_COUNT: usize = 100;
-/// The point of this function is to indicate that a compilation error happened, but continue the compilation anyway
-/// even if the state of the Compiler became bogus. This is needed to report as many compilation errors as possible.
-/// After calling this function always continue the compilation like nothing happened.
-pub unsafe fn bump_error_count(c: *mut Compiler) -> Option<()> {
-    (*c).error_count += 1;
-    if (*c).error_count >= MAX_ERROR_COUNT {
-        fprintf(stderr(), c!("TOO MANY ERRORS! Fix your program!\n"));
-        return None
-    }
-    Some(())
-}
-
+#[must_use]
 pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
-    'def: loop {
-        lexer::get_token(l)?;
+    'def: loop {                
+        let _ = lexer::get_next_valid_token(l);
         match (*l).token {
             Token::EOF => break 'def,
             Token::Variadic => {
@@ -974,59 +1060,95 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                     // TODO: report all the duplicate variadics maybe?
                     diagf!(func_loc, c!("ERROR: duplicate variadic declaration `%s`\n"), func);
                     diagf!((*existing_variadic).loc, c!("NOTE: the first declaration is located here\n"));
-                    bump_error_count(c)?;
+                    bump_error_count(&mut (*c).error_count)?;
                 }
                 get_and_expect_token_but_continue(l, c, Token::Comma)?;
                 get_and_expect_token_but_continue(l, c, Token::IntLit)?;
-                if (*l).int_number == 0 {
+                let arg_count: u64;
+                if let Some(v) = parse_int_literal_to_u64((*l).string, (*l).radix) {
+                    arg_count = v;
+                } else {
+                    diagf!(loc(l), c!("ERROR: Constant integer overflow.\n"));
+                    return None;
+                }
+                if arg_count == 0 {
                     diagf!((*l).loc, c!("ERROR: variadic function `%s` cannot have 0 arguments\n"), func);
-                    bump_error_count(c)?;
+                    bump_error_count(&mut (*c).error_count)?;
                 }
                 da_append(&mut (*c).program.variadics, (func, Variadic {
                     loc: func_loc,
-                    fixed_args: (*l).int_number as usize,
+                    fixed_args: arg_count as usize,
                 }));
                 get_and_expect_token_but_continue(l, c, Token::CParen)?;
                 get_and_expect_token_but_continue(l, c, Token::SemiColon)?;
             }
             Token::Extrn => {
                 while (*l).token != Token::SemiColon {
-                    get_and_expect_token(l, Token::ID)?;
+                    get_and_expect_token(l, c, Token::ID)?;
                     let name = arena::strdup(&mut (*c).arena, (*l).string);
                     name_declare_if_not_exists(&mut (*c).program.extrns, name);
                     declare_var(c, name, (*l).loc, Storage::External {name})?;
-                    get_and_expect_tokens(l, &[Token::SemiColon, Token::Comma])?;
+                    get_and_expect_tokens(l, c, &[Token::SemiColon, Token::Comma])?;
                 }
             }
             _ => {
-                expect_token(l, Token::ID)?;
+                let mut next = expect_token(l, c, Token::ID)?;
+                if !next {
+                    loop {
+                        lexer::get_next_valid_token(l)?;
+                        next = expect_token(l, c, Token::ID)?;
+                        if next {
+                            break;
+                        }
+                    }
+                }
                 let name = arena::strdup(&mut (*c).arena, (*l).string);
                 let name_loc = (*l).loc;
                 declare_var(c, name, name_loc, Storage::External{name})?;
 
-                let saved_point = (*l).parse_point;
-                lexer::get_token(l)?;
+
+                lexer::skip_whitespaces_and_comments(l)?;
+                let next_tok_loc = loc(l);
+                lexer::get_next_valid_token(l)?;
 
                 match (*l).token {
                     Token::OParen => { // Function definition
                         scope_push(&mut (*c).vars); // begin function scope
                         let mut params_count = 0;
                         let saved_point = (*l).parse_point;
-                        lexer::get_token(l)?;
+                        lexer::get_next_valid_token(l)?;
                         if (*l).token != Token::CParen {
                             (*l).parse_point = saved_point;
                             'params: loop {
-                                get_and_expect_token(l, Token::ID)?;
-                                let name = arena::strdup(&mut (*c).arena, (*l).string);
-                                let name_loc = (*l).loc;
-                                let index = allocate_auto_var(&mut (*c).auto_vars_ator);
-                                declare_var(c, name, name_loc, Storage::Auto{index})?;
-                                params_count += 1;
-                                get_and_expect_tokens(l, &[Token::CParen, Token::Comma])?;
-                                match (*l).token {
-                                    Token::CParen => break 'params,
-                                    Token::Comma => continue 'params,
-                                    _ => unreachable!(),
+                                if let Some(true) = get_and_expect_token(l, c, Token::ID) {
+                                    let name = arena::strdup(&mut (*c).arena, (*l).string);
+                                    let name_loc = (*l).loc;
+                                    let index = allocate_auto_var(&mut (*c).auto_vars_ator);
+                                    declare_var(c, name, name_loc, Storage::Auto{index})?;
+                                    params_count += 1;
+                                    lexer::get_next_valid_token(l)?;
+                                }
+                                
+                                let mut next = expect_tokens(l, c, &[Token::CParen, Token::Comma])?;
+                                if next {
+                                    match (*l).token {
+                                        Token::CParen => break 'params,
+                                        Token::Comma => continue 'params,
+                                        _ => unreachable!(),
+                                    }
+                                } else {
+                                    loop {
+                                        lexer::get_next_valid_token(l)?;
+                                        next = (*l).token == Token::CParen ||
+                                               (*l).token == Token::Comma;
+                                        if next {
+                                            match (*l).token {
+                                                Token::CParen => break 'params,
+                                                Token::Comma => continue 'params,
+                                                _ => unreachable!(),
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1038,7 +1160,7 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                             let existing_label = find_goto_label(&(*c).func_goto_labels, used_label.name);
                             if existing_label.is_null() {
                                 diagf!(used_label.loc, c!("ERROR: label `%s` used but not defined\n"), used_label.name);
-                                bump_error_count(c)?;
+                                bump_error_count(&mut (*c).error_count)?;
                                 continue;
                             }
                             (*(*c).func_body.items.add(used_label.addr)).opcode = Op::JmpLabel {label: (*existing_label).label};
@@ -1066,62 +1188,109 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                         da_append(&mut (*c).program.asm_funcs, AsmFunc {name, name_loc, body});
                     }
                     _ => { // Variable definition
-                        (*l).parse_point = saved_point;
-
                         let mut global = Global {
                             name,
                             name_loc,
                             values: zeroed(),
+                            value_locs: zeroed(),
                             is_vec: false,
                             minimum_size: 0,
                         };
 
+                        let mut value_loc;
+
+                        value_loc = next_tok_loc;
                         // TODO: This code is ugly
                         // couldn't find a better way to write it while keeping accurate error messages
-                        get_and_expect_tokens(l, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID, Token::SemiColon, Token::OBracket])?;
+                        expect_tokens(l, c, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID, Token::SemiColon, Token::OBracket])?;
 
                         if (*l).token == Token::OBracket {
                             global.is_vec = true;
-                            get_and_expect_tokens(l, &[Token::IntLit, Token::CBracket])?;
+                            get_and_expect_tokens(l, c, &[Token::IntLit, Token::CBracket])?;
                             if (*l).token == Token::IntLit {
-                                global.minimum_size = (*l).int_number as usize;
+                                if let Some(v) = parse_int_literal_to_u64((*l).string, (*l).radix) {
+                                    global.minimum_size = v as usize;
+                                } else {
+                                    diagf!(loc(l), c!("ERROR: Constant integer overflow.\n"));
+                                    return None;
+                                }
                                 get_and_expect_token_but_continue(l, c, Token::CBracket)?;
                             }
-                            get_and_expect_tokens(l, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID, Token::SemiColon])?;
+
+                            if (*l).token == Token::CBracket {
+                                lexer::skip_whitespaces_and_comments(l)?;
+                                value_loc = loc(l);
+                                get_and_expect_tokens(l, c, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID, Token::SemiColon])?;
+                            }
                         }
 
                         while (*l).token != Token::SemiColon {
                             let value = match (*l).token {
                                 Token::Minus => {
-                                    get_and_expect_token(l, Token::IntLit)?;
-                                    ImmediateValue::Literal(!(*l).int_number + 1)
+                                    get_and_expect_token(l, c, Token::IntLit)?;
+                                    let value = arena::strdup(&mut (*c).arena, (*l).string);
+                                    ImmediateValue::NegatedIntLiteral(value, (*l).radix)
                                 }
-                                Token::IntLit | Token::CharLit => ImmediateValue::Literal((*l).int_number),
-                                Token::String => ImmediateValue::DataOffset(compile_string((*l).string, c)),
+                                Token::CharLit => {
+                                    let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+                                    memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+                                    ImmediateValue::CharLiteral(value as *const c_char, (*l).string_storage.count - 1)
+                                }
+                                Token::IntLit => {
+                                    let value = arena::strdup(&mut (*c).arena, (*l).string);
+                                    ImmediateValue::IntLiteral(value, (*l).radix)
+                                }
+                                Token::String => {
+                                    let count = (*l).string_storage.count - 1;
+                                    let value = arena::alloc(&mut (*c).arena, count);
+                                    memcpy(value, (*l).string as *const c_void, count);
+                                    let string_number = add_string(value as *const c_char, count, c);
+                                    ImmediateValue::String(string_number)
+                                }
                                 Token::ID => {
                                     let name = arena::strdup(&mut (*c).arena, (*l).string);
                                     let scope = da_last_mut(&mut (*c).vars).expect("There should be always at least the global scope");
                                     let var = find_var_near(scope, name);
                                     if var.is_null() {
                                         diagf!((*l).loc, c!("ERROR: could not find name `%s`\n"), name);
-                                        bump_error_count(c)?;
+                                        bump_error_count(&mut (*c).error_count)?;
                                     }
                                     ImmediateValue::Name(name)
                                 }
-                                _ => unreachable!()
+                                _ => {
+                                    // It shpuld be ok here, because it will fail before assembler and
+                                    // be silent during codegen
+                                    ImmediateValue::IntLiteral(c!("0"), Radix::Dec)
+                                }
                             };
                             da_append(&mut global.values, value);
-
-                            get_and_expect_tokens(l, &[Token::SemiColon, Token::Comma])?;
+                            da_append(&mut global.value_locs, value_loc);
+                            
+                            lexer::get_next_valid_token(l)?;
+                            let mut next = expect_tokens(l, c, &[Token::SemiColon, Token::Comma])?;
+                            if !next {
+                                loop {
+                                    if next {
+                                        break;
+                                    }
+                                    lexer::get_next_valid_token(l)?;
+                                    next = (*l).token == Token::SemiColon ||
+                                           (*l).token == Token::Comma;
+                                }
+                            }
                             if (*l).token == Token::Comma {
-                                get_and_expect_tokens(l, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID])?;
+                                lexer::skip_whitespaces_and_comments(l)?;
+                                value_loc = loc(l);
+                                if let Some(_) = get_and_expect_tokens(l, c, &[Token::Minus, Token::IntLit, Token::CharLit, Token::String, Token::ID]) {
+                                }
                             } else {
                                 break;
                             }
                         }
 
                         if !global.is_vec && global.values.count == 0 {
-                            da_append(&mut global.values, ImmediateValue::Literal(0));
+                            da_append(&mut global.values, ImmediateValue::IntLiteral(c!("0"), Radix::Dec));
+                            da_append(&mut global.value_locs, global.name_loc);
                         }
                         da_append(&mut (*c).program.globals, global)
                     }
@@ -1200,6 +1369,7 @@ pub unsafe fn print_available_targets(targets: *const [Target]) {
     }
 }
 
+#[must_use]
 pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
     let targets = codegen::load_targets()?;
 
@@ -1289,8 +1459,7 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
 
     let mut c: Compiler = zeroed();
     c.historical = *historical;
-    let executable_directory = arena::strdup(&mut c.arena, dirname(flag_program_name()));
-
+    let executable_directory = dirname(temp_running_executable_path());
     if (*linker).count > 0 {
         let mut s: Shlex = zeroed();
         for i in 0..(*linker).count {
@@ -1344,7 +1513,7 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
             input.count = 0;
             read_entire_file(input_path, &mut input)?;
 
-            let mut l: Lexer = lexer::new(input_path, input.items, input.items.add(input.count), *historical);
+            let mut l: Lexer = lexer::new(input_path, input.items, input.items.add(input.count), *historical, &mut c.error_count);
 
             compile_program(&mut l, &mut c)?;
         }
@@ -1354,20 +1523,20 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
 
             if find_var_deep(&mut c.vars, used_global.name).is_null() {
                 diagf!(used_global.loc, c!("ERROR: could not find name `%s`\n"), used_global.name);
-                bump_error_count(&mut c)?;
+                bump_error_count(&mut c.error_count)?;
             }
         }
 
         scope_pop(&mut c.vars);          // end global scope
 
-        if c.error_count > 0 {
-            return None;
-        }
-
         log(Log_Level::INFO, c!("compilation took %.3fs"), compilation_start.elapsed().as_secs_f64());
     }
+    
 
-    if *ir {
+    if *ir { 
+        if c.error_count != 0 {
+            return None;
+        }
         let mut output: String_Builder = zeroed();
         dump_program(&mut output, &c.program);
         da_append(&mut output, 0);
@@ -1403,7 +1572,12 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
     let garbage_base = get_garbage_base(program_path, target)?;
 
     if !*nobuild {
+        c.program.error_count = &mut c.error_count;
         target.build(gen, &c.program, program_path, garbage_base, *nostdlib, *debug)?;
+    }
+
+    if c.error_count > 0 {
+        return None;
     }
 
     if *run {

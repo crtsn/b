@@ -10,7 +10,7 @@ gt8 __asm__(
     "TSX",
     "CMP $0103,X",
     "BMI minus",
-    "BPL *+5", /* check relative addresses, skip LDA and RTS */
+    "BPL **+5", /* check relative addresses, skip LDA and RTS */
     "LDA #$69",
     "RTS",
     "plus:",

@@ -4,12 +4,12 @@ main() {
     auto s, q, i, n;
     s = "hello, world";
     printf("lower: %s\n", s);
-    n = strlen(s);
     q = malloc(n + 1);
-    i = 0; while (i < n) {
+    n = strlen(s);
+	i = 0; while (i < n) {
         lchar(q, i, toupper(char(s, i)));
         i++;
     }
-    lchar(q, n, 0);
+    lchar(q, n, '*e');
     printf("UPPER: %s\n", q);
 }

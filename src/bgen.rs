@@ -20,6 +20,7 @@ use crust::*;
 
 const BUILD_LIBB_PATH: *const c_char = c!("./build/libb/");
 
+#[must_use]
 pub unsafe fn aggregate_to_libb(folder_path: *const c_char) -> Option<()> {
     let mut children: File_Paths = zeroed();
 
@@ -48,6 +49,7 @@ pub unsafe fn aggregate_to_libb(folder_path: *const c_char) -> Option<()> {
     Some(())
 }
 
+#[must_use]
 pub unsafe fn reset_libb() -> Option<()> {
     if !mkdir_if_not_exists(BUILD_LIBB_PATH) { return None; }
 
@@ -70,6 +72,7 @@ pub unsafe fn reset_libb() -> Option<()> {
     Some(())
 }
 
+#[must_use]
 pub unsafe fn main(mut _argc: i32, mut _argv: *mut*mut c_char) -> Option<()> {
     if !mkdir_if_not_exists(c!("./build/")) { return None; }
 

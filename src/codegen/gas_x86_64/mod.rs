@@ -2,6 +2,7 @@ use core::ffi::*;
 use core::mem::zeroed;
 use core::cmp;
 use crate::ir::*;
+use crate::errors::bump_error_count;
 use crate::nob::*;
 use crate::targets::{Os, TargetAPI};
 use crate::crust::libc::*;
@@ -9,6 +10,8 @@ use crate::lexer::Loc;
 use crate::shlex::*;
 use crate::arena;
 use crate::params::*;
+use crate::codegen_common::{parse_int_literal_to_u64, parse_char_literal_to_u64_le};
+use crate::diagf;
 
 pub unsafe fn align_bytes(bytes: usize, alignment: usize) -> usize {
     let rem = bytes%alignment;
@@ -19,7 +22,8 @@ pub unsafe fn align_bytes(bytes: usize, alignment: usize) -> usize {
     }
 }
 
-pub unsafe fn call_arg(arg: Arg, output: *mut String_Builder, os: Os) {
+#[must_use]
+pub unsafe fn call_arg(arg: Arg, loc: Loc, output: *mut String_Builder, os: Os, p: *const Program) -> Option<()> {
     match arg {
         Arg::RefExternal(name) | Arg::External(name) => {
             match os {
@@ -28,13 +32,15 @@ pub unsafe fn call_arg(arg: Arg, output: *mut String_Builder, os: Os) {
             }
         }
         arg => {
-            load_arg_to_reg(arg, c!("rax"), output, os);
+            load_arg_to_reg(arg, c!("rax"), output, loc, os, p)?;
             sb_appendf(output, c!("    call *%%rax\n"))
         }
     };
+    Some(())
 }
 
-pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char,output: *mut String_Builder, os: Os) {
+#[must_use]
+pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char,output: *mut String_Builder, loc: Loc, os: Os, p: *const Program) -> Option<()> {
     match arg {
         Arg::Deref(index) => {
             sb_appendf(output, c!("    movq -%zu(%%rbp), %%%s\n"), index * 8, reg);
@@ -50,13 +56,39 @@ pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char,output: *mut String_B
             Os::Darwin              => sb_appendf(output, c!("    movq _%s(%%rip), %%%s\n"), name, reg),
         },
         Arg::AutoVar(index)     => sb_appendf(output, c!("    movq -%zu(%%rbp), %%%s\n"), index * 8, reg),
-        Arg::Literal(value)     => sb_appendf(output, c!("    movq $%lld, %%%s\n"), value, reg),
-        Arg::DataOffset(offset) => {sb_appendf(output, c!("    leaq dat+%zu(%%rip), %%%s\n"), offset, reg)},
+        Arg::IntLiteral(int_literal, radix) => {
+            let value: u64;
+            if let Some(v) = parse_int_literal_to_u64(int_literal, radix) {
+                value = v;
+            } else {
+                diagf!(loc, c!("ERROR: x86_64: Constant integer overflow.\n"));
+                value = bump_error_count((*p).error_count).map(|()| 0)?;
+            }
+            sb_appendf(output, c!("    movq $%lld, %%%s\n"), value, reg)
+        }
+        Arg::CharLiteral(char_literal, count) => {
+            let value: u64;
+            if let Some(v) = parse_char_literal_to_u64_le(char_literal, count) {
+                value = v;
+            } else {
+                diagf!(loc, c!("ERROR: x86_64: Character constant overflows platform word\n"));
+                value = bump_error_count((*p).error_count).map(|()| 0)?;
+            }
+            sb_appendf(output, c!("    movq $%lld, %%%s\n"), value, reg)
+        }
+        Arg::String(string_number) => {
+            match os {
+                Os::Linux | Os::Windows => sb_appendf(output, c!("    leaq .Ldat_sec_string_%zu, %%%s\n"), string_number, reg),
+                Os::Darwin              => sb_appendf(output, c!("    leaq Ldat_sec_string_%zu, %%%s\n"), string_number, reg),
+            }
+        }
         Arg::Bogus => unreachable!("bogus-amogus"),
     };
+    Some(())
 }
 
-pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: usize, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], scope_events: *const [ScopeEvent], debug: bool, output: *mut String_Builder, os: Os) {
+#[must_use]
+pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: usize, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], scope_events: *const [ScopeEvent], debug: bool, output: *mut String_Builder, os: Os, p: *const Program) -> Option<()> {
     let stack_size = align_bytes(auto_vars_count * 8, 16);
     match os {
         Os::Linux | Os::Windows => {
@@ -92,7 +124,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
         sb_appendf(output, c!("    subq $%zu, %%rsp\n"), stack_size);
     }
     assert!(auto_vars_count >= params_count);
-        let registers: *const[*const c_char] = match os {
+    let registers: *const[*const c_char] = match os {
         Os::Linux | Os::Darwin => &[c!("rdi"), c!("rsi"), c!("rdx"), c!("rcx"), c!("r8"), c!("r9")],
         Os::Windows => &[c!("rcx"), c!("rdx"), c!("r8"), c!("r9")], // https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention
     };
@@ -143,7 +175,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
             Op::Bogus => unreachable!("bogus-amogus"),
             Op::Return { arg } => {
                 if let Some(arg) = arg {
-                    load_arg_to_reg(arg, c!("rax"), output, os);
+                    load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 }
                 sb_appendf(output, c!("    movq %%rbp, %%rsp\n"));
                 sb_appendf(output, c!("    popq %%rbp\n"));
@@ -151,44 +183,44 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
             }
             Op::Store { index, arg } => {
                 sb_appendf(output, c!("    movq -%zu(%%rbp), %%rax\n"), index * 8);
-                load_arg_to_reg(arg, c!("rcx"), output, os);
+                load_arg_to_reg(arg, c!("rcx"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    movq %%rcx, (%%rax)\n"));
             }
             Op::ExternalAssign { name, arg } => {
-                load_arg_to_reg(arg, c!("rax"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 match os {
                     Os::Linux | Os::Windows => sb_appendf(output, c!("    movq %%rax, %s(%%rip)\n"), name),
                     Os::Darwin              => sb_appendf(output, c!("    movq %%rax, _%s(%%rip)\n"), name),
                 };
             }
             Op::AutoAssign { index, arg } => {
-                load_arg_to_reg(arg, c!("rax"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    movq %%rax, -%zu(%%rbp)\n"), index * 8);
             }
             Op::Negate { result, arg } => {
-                load_arg_to_reg(arg, c!("rax"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    negq %%rax\n"));
                 sb_appendf(output, c!("    movq %%rax, -%zu(%%rbp)\n"), result * 8);
             }
             Op::UnaryNot { result, arg } => {
                 sb_appendf(output, c!("    xorq %%rcx, %%rcx\n"));
-                load_arg_to_reg(arg, c!("rax"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    testq %%rax, %%rax\n"));
                 sb_appendf(output, c!("    setz %%cl\n"));
                 sb_appendf(output, c!("    movq %%rcx, -%zu(%%rbp)\n"), result * 8);
             }
             Op::Binop {binop, index, lhs, rhs} => {
-                load_arg_to_reg(lhs, c!("rax"), output, os);
-                load_arg_to_reg(rhs, c!("rcx"), output, os);
+                load_arg_to_reg(lhs, c!("rax"), output, op.loc, os, p)?;
+                load_arg_to_reg(rhs, c!("rcx"), output, op.loc, os, p)?;
                 match binop {
                     Binop::BitOr => { sb_appendf(output, c!("    orq %%rcx, %%rax\n")); }
                     Binop::BitAnd => { sb_appendf(output, c!("    andq %%rcx, %%rax\n")); }
                     Binop::BitShl => {
-                        load_arg_to_reg(rhs, c!("rcx"), output, os);
+                        load_arg_to_reg(rhs, c!("rcx"), output, op.loc, os, p)?;
                         sb_appendf(output, c!("    shlq %%cl, %%rax\n"));
                     }
                     Binop::BitShr => {
-                        load_arg_to_reg(rhs, c!("rcx"), output, os);
+                        load_arg_to_reg(rhs, c!("rcx"), output, op.loc, os, p)?;
                         sb_appendf(output, c!("    shrq %%cl, %%rax\n"));
                     }
                     Binop::Plus => { sb_appendf(output, c!("    addq %%rcx, %%rax\n")); }
@@ -228,7 +260,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
                 let reg_args_count = cmp::min(args.count, registers.len());
                 for i in 0..reg_args_count {
                     let reg = (*registers)[i];
-                    load_arg_to_reg(*args.items.add(i), reg, output, os);
+                    load_arg_to_reg(*args.items.add(i), reg, output, op.loc, os, p)?;
                 }
 
                 let stack_args_count = args.count - reg_args_count;
@@ -236,7 +268,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
                 if stack_args_count > 0 {
                     sb_appendf(output, c!("    subq $%zu, %%rsp\n"), stack_args_size);
                     for i in 0..stack_args_count {
-                        load_arg_to_reg(*args.items.add(reg_args_count + i), c!("rax"), output, os);
+                        load_arg_to_reg(*args.items.add(reg_args_count + i), c!("rax"), output, op.loc, os, p)?;
                         sb_appendf(output, c!("    movq %%rax, %zu(%%rsp)\n"), i * 8);
                     }
                 }
@@ -247,14 +279,14 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
                                                                        // does not distinguish regular and
                                                                        // variadic functions we set al to 0 just
                                                                        // in case.
-                        call_arg(fun, output, os);
+                        call_arg(fun, op.loc, output, os, p)?;
                     }
                     Os::Windows => {
                         // allocate 32 bytes for "shadow space"
                         // it must be allocated at the top of the stack after all arguments are pushed
                         // so we can't allocate it at function prologue
                         sb_appendf(output, c!("    subq $32, %%rsp\n"));
-                        call_arg(fun, output, os);
+                        call_arg(fun, op.loc, output, os, p)?;
                         sb_appendf(output, c!("    addq $32, %%rsp\n"));
                     }
                 }
@@ -283,7 +315,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
                 };
             }
             Op::JmpIfNotLabel { label, arg } => {
-                load_arg_to_reg(arg, c!("rax"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    testq %%rax, %%rax\n"));
                 match os {
                     Os::Linux | Os::Windows => sb_appendf(output, c!("    jz .L%s_label_%zu\n"), name, label),
@@ -291,8 +323,8 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
                 };
             }
             Op::Index {result, arg, offset} => {
-                load_arg_to_reg(arg, c!("rax"), output, os);
-                load_arg_to_reg(offset, c!("rcx"), output, os);
+                load_arg_to_reg(arg, c!("rax"), output, op.loc, os, p)?;
+                load_arg_to_reg(offset, c!("rcx"), output, op.loc, os, p)?;
                 sb_appendf(output, c!("    leaq (%%rax, %%rcx, 8), %%rax\n"));
                 sb_appendf(output, c!("    movq %%rax, -%zu(%%rbp)\n"), result * 8);
             },
@@ -329,13 +361,16 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, func_index: 
             };
         }
     }
+    Some(())
 }
 
-pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func], debug: bool, os: Os) {
+#[must_use]
+pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func], debug: bool, os: Os, p: *const Program) -> Option<()> {
     for i in 0..funcs.len() {
         let func = (*funcs)[i];
-        generate_function(func.name, func.name_loc, i, func.params_count, func.auto_vars_count, da_slice(func.body), da_slice(func.scope_events), debug, output, os);
+        generate_function(func.name, func.name_loc, i, func.params_count, func.auto_vars_count, da_slice(func.body), da_slice(func.scope_events), debug, output, os, p)?;
     }
+    Some(())
 }
 
 pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const [AsmFunc], os: Os) {
@@ -360,7 +395,8 @@ pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const 
     }
 }
 
-pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Global], os: Os) {
+#[must_use]
+pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Global], os: Os, p: *const Program) -> Option<()> {
     for i in 0..globals.len() {
         let global = (*globals)[i];
         match os {
@@ -387,12 +423,46 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                     sb_appendf(output, c!(","));
                 }
                 match *global.values.items.add(j) {
-                    ImmediateValue::Literal(lit)       => sb_appendf(output, c!("0x%llX"), lit),
+                    ImmediateValue::IntLiteral(int_literal, radix) => {
+                        let value: u64;
+                        if let Some(v) = parse_int_literal_to_u64(int_literal, radix) {
+                            value = v;
+                        } else {
+                            diagf!(*global.value_locs.items.add(j), c!("ERROR: x86_64: Constant integer overflow.\n"));
+                            value = bump_error_count((*p).error_count).map(|()| 0)?;
+                        }
+                        sb_appendf(output, c!("0x%llX"), value)
+                    }
+                    ImmediateValue::NegatedIntLiteral(int_literal, radix) => {
+                        let value: u64;
+                        if let Some(v) = parse_int_literal_to_u64(int_literal, radix) {
+                            value = !v + 1;
+                        } else {
+                            diagf!(*global.value_locs.items.add(j), c!("ERROR: x86_64: Constant integer overflow.\n"));
+                            value = bump_error_count((*p).error_count).map(|()| 0)?;
+                        }
+                        sb_appendf(output, c!("0x%llX"), value)
+                    }
+                    ImmediateValue::CharLiteral(char_literal, count) => {
+                        let value: u64;
+                        if let Some(v) = parse_char_literal_to_u64_le(char_literal, count) {
+                            value = v;
+                        } else {
+                            diagf!(*global.value_locs.items.add(j), c!("ERROR: x86_64: Character constant overflows platform word\n"));
+                            value = bump_error_count((*p).error_count).map(|()| 0)?;
+                        }
+                        sb_appendf(output, c!("0x%llX"), value)
+                    }
                     ImmediateValue::Name(name)         => match os {
                         Os::Linux | Os::Windows => sb_appendf(output, c!("%s"), name),
                         Os::Darwin              => sb_appendf(output, c!("_%s"), name),
                     }
-                    ImmediateValue::DataOffset(offset) => sb_appendf(output, c!("dat+%zu"), offset),
+                    ImmediateValue::String(string_number) => {
+                        match os {
+                            Os::Linux | Os::Windows => sb_appendf(output, c!(".Ldat_sec_string_%zu"), string_number),
+                            Os::Darwin              => sb_appendf(output, c!("Ldat_sec_string_%zu"), string_number),
+                        }
+                    }
                 };
             }
             sb_appendf(output, c!("\n"));
@@ -404,16 +474,36 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
             }
         }
     }
+    Some(())
 }
 
-pub unsafe fn generate_data_section(output: *mut String_Builder, data: *const [u8]) {
-    if data.len() > 0 {
-        sb_appendf(output, c!("dat: .byte "));
-        for i in 0..data.len() {
-            if i > 0 {
-                sb_appendf(output, c!(","));
+pub unsafe fn generate_strings(output: *mut String_Builder, os: Os, p: *const Program) {
+    let wb = 8;
+    for i in 0..(*p).strings.count {
+        let string = *(*p).strings.items.add(i);
+        match os {
+            Os::Linux | Os::Windows => sb_appendf(output, c!(".Ldat_sec_string_%zu: .byte "), i),
+            Os::Darwin              => sb_appendf(output, c!("Ldat_sec_string_%zu: .byte "), i),
+        };
+        let n = string.count;
+        let mut first_byte = true;
+        let nwords = n/wb + 1;
+        for w in 0..nwords {
+            for k in 0..wb {
+                let gi = w*wb + (wb-1-k);
+                let value: u8 = if gi < n {
+                    *string.string.add(gi) as u8
+                } else if gi == n {
+                    0x04
+                } else {
+                    0x00
+                };
+                if !first_byte {
+                    sb_appendf(output, c!(","));
+                }
+                first_byte = false;
+                sb_appendf(output, c!("0x%02X"), value as c_uint);
             }
-            sb_appendf(output, c!("0x%02X"), (*data)[i] as c_uint);
         }
         sb_appendf(output, c!("\n"));
     }
@@ -706,28 +796,29 @@ pub unsafe fn new(a: *mut arena::Arena, args: *const [*const c_char]) -> Option<
     Some(gen as *mut c_void)
 }
 
+#[must_use]
 pub unsafe fn generate_program(
-    gen: *mut c_void, program: *const Program, program_path: *const c_char, garbage_base: *const c_char, os: Os,
+    gen: *mut c_void, p: *const Program, program_path: *const c_char, garbage_base: *const c_char, os: Os,
     nostdlib: bool, debug: bool,
 ) -> Option<()> {
     let gen = gen as *mut Gas_x86_64;
     let output = &mut (*gen).output;
     let cmd = &mut (*gen).cmd;
 
-    if debug { generate_debuginfo(output, (*program).funcs, (*program).globals, os); }
+    if debug { generate_debuginfo(output, (*p).funcs, (*p).globals, os); }
 
     match os {
         Os::Darwin => sb_appendf(output, c!(".text\n")),
         Os::Linux | Os::Windows => sb_appendf(output, c!(".section .text\n")),
     };
-    generate_funcs(output, da_slice((*program).funcs), debug, os);
-    generate_asm_funcs(output, da_slice((*program).asm_funcs), os);
+    generate_funcs(output, da_slice((*p).funcs), debug, os, p)?;
+    generate_asm_funcs(output, da_slice((*p).asm_funcs), os);
     match os {
         Os::Darwin => sb_appendf(output, c!(".data\n")),
         Os::Linux | Os::Windows => sb_appendf(output, c!(".section .data\n")),
     };
-    generate_data_section(output, da_slice((*program).data));
-    generate_globals(output, da_slice((*program).globals), os);
+    generate_globals(output, da_slice((*p).globals), os, p)?;
+    generate_strings(output, os, p);
 
     let output_asm_path = temp_sprintf(c!("%s.s"), garbage_base);
     write_entire_file(output_asm_path, (*output).items as *const c_void, (*output).count)?;

@@ -61,6 +61,7 @@ impl Target {
     }
 }
 
+#[must_use]
 pub unsafe fn register_apis(targets: *mut Array<Target>, apis: *const [TargetAPI], codegen_name: *const c_char) -> Option<()> {
     for i in 0..apis.len() {
         let api = (*apis)[i];
@@ -102,7 +103,7 @@ pub enum TargetAPI {
             program_path: *const c_char,
             run_args: *const [*const c_char],
         ) -> Option<()>,
-    }
+    },
 }
 
 impl TargetAPI {

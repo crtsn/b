@@ -1,6 +1,16 @@
 use core::ffi::*;
+use core::mem::zeroed;
 use crate::lexer::*;
 use crate::nob::*;
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Radix {
+    Invalid = 0,
+    Oct = 8,
+    Dec = 10,
+    Hex = 16,
+}
 
 #[derive(Clone, Copy)]
 pub enum Arg {
@@ -22,8 +32,9 @@ pub enum Arg {
     RefAutoVar(usize),
     RefExternal(*const c_char),
     External(*const c_char),
-    Literal(u64),
-    DataOffset(usize),
+    CharLiteral(*const c_char, usize),
+    IntLiteral(*const c_char, Radix),
+    String(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -107,15 +118,24 @@ pub struct Global {
     pub name: *const c_char,
     pub name_loc: Loc,
     pub values: Array<ImmediateValue>,
+    pub value_locs: Array<Loc>,
     pub is_vec: bool,
     pub minimum_size: usize,
 }
 
 #[derive(Clone, Copy)]
+pub struct String {
+    pub string: *const c_char,
+    pub count: usize,
+}
+
+#[derive(Clone, Copy)]
 pub enum ImmediateValue {
     Name(*const c_char),
-    Literal(u64),
-    DataOffset(usize),
+    IntLiteral(*const c_char, Radix),
+    CharLiteral(*const c_char, usize),
+    NegatedIntLiteral(*const c_char, Radix),
+    String(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -128,11 +148,12 @@ pub struct AsmFunc {
 #[derive(Clone, Copy)]
 pub struct Program {
     pub funcs: Array<Func>,
-    pub data: Array<u8>,
     pub extrns: Array<*const c_char>,
     pub variadics: Array<(*const c_char, Variadic)>,
     pub globals: Array<Global>,
+    pub strings: Array<String>,
     pub asm_funcs: Array<AsmFunc>,
+    pub error_count: *mut usize, 
 }
 
 pub unsafe fn dump_arg_call(arg: Arg, output: *mut String_Builder) {
@@ -148,15 +169,47 @@ pub unsafe fn dump_arg_call(arg: Arg, output: *mut String_Builder) {
 
 }
 
+pub unsafe fn dump_string_common(raw_string: *mut String_Builder, value: *const c_char, count: usize) {
+    for i in 0..count {
+        let byte = *value.add(i);
+        match byte {
+            v if v == '\0' as c_char => sb_appendf(raw_string, c!("*0")),
+            v if v == 4    as c_char => sb_appendf(raw_string, c!("*e")),
+            v if v == '\n' as c_char => sb_appendf(raw_string, c!("*n")),
+            v if v == '\t' as c_char => sb_appendf(raw_string, c!("*t")),
+            v if v == '\r' as c_char => sb_appendf(raw_string, c!("*r")),
+            v if v == '\'' as c_char => sb_appendf(raw_string, c!("*'")),
+            v if v == '*'  as c_char => sb_appendf(raw_string, c!("**")),
+            v => sb_appendf(raw_string, c!("%c"), v as c_int),
+        };
+    }
+    da_append(raw_string, 0);
+}
+
+pub unsafe fn dump_string(output: *mut String_Builder, value: *const c_char, count: usize) -> c_int {
+    let mut raw_string: String_Builder = zeroed();
+    dump_string_common(&mut raw_string, value, count);
+    let res = sb_appendf(output, c!("\"%s\""), raw_string.items);
+    res
+}
+
+pub unsafe fn dump_char_literal(output: *mut String_Builder, value: *const c_char, count: usize) -> c_int {
+    let mut raw_string: String_Builder = zeroed();
+    dump_string_common(&mut raw_string, value, count);
+    let res = sb_appendf(output, c!("'%s'"), raw_string.items);
+    res
+}
+
 pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
     match arg {
         Arg::External(name)     => sb_appendf(output, c!("%s"), name),
         Arg::Deref(index)       => sb_appendf(output, c!("deref[%zu]"), index),
         Arg::RefAutoVar(index)  => sb_appendf(output, c!("ref auto[%zu]"), index),
         Arg::RefExternal(name)  => sb_appendf(output, c!("ref %s"), name),
-        Arg::Literal(value)     => sb_appendf(output, c!("%lld"), value),
+        Arg::IntLiteral(value, radix)     => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
+        Arg::CharLiteral(value, count)     => dump_char_literal(output, value, count),
         Arg::AutoVar(index)     => sb_appendf(output, c!("auto[%zu]"), index),
-        Arg::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
+        Arg::String(string_number) => sb_appendf(output, c!("strings[%zu]"), string_number),
         Arg::Bogus              => unreachable!("bogus-amogus")
     };
 }
@@ -259,7 +312,7 @@ pub unsafe fn dump_op(op: OpWithLocation, output: *mut String_Builder) {
 }
 
 pub unsafe fn dump_function(name: *const c_char, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
-    sb_appendf(output, c!("%s(%zu, %zu):\n"), name, params_count, auto_vars_count);
+    sb_appendf(output, c!("%s(params: %zu, auto_vars: %zu):\n"), name, params_count, auto_vars_count);
     for i in 0..body.len() {
         dump_op((*body)[i], output)
     }
@@ -296,51 +349,25 @@ pub unsafe fn dump_globals(output: *mut String_Builder, globals: *const [Global]
                 sb_appendf(output, c!(", "));
             }
             match *global.values.items.add(j) {
-                ImmediateValue::Literal(lit) => sb_appendf(output, c!("%zu"), lit),
+                ImmediateValue::IntLiteral(value, radix) => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
+                ImmediateValue::NegatedIntLiteral(value, radix) => sb_appendf(output, c!("-%s/base%d"), value, radix as u64),
+                ImmediateValue::CharLiteral(value, count)     => dump_char_literal(output, value, count),
                 ImmediateValue::Name(name) => sb_appendf(output, c!("%s"), name),
-                ImmediateValue::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
+                ImmediateValue::String(string_number) => sb_appendf(output, c!("strings[%zu]"), string_number),
             };
         }
         sb_appendf(output, c!("\n"));
     }
 }
 
-pub unsafe fn dump_data_section(output: *mut String_Builder, data: *const [u8]) {
-    if data.len() > 0 {
+pub unsafe fn dump_strings(output: *mut String_Builder, strings: *const [String]) {
+    sb_appendf(output, c!("\n"));
+    sb_appendf(output, c!("-- Strings --\n\n"));
+    for i in 0..strings.len() {
+        let string = (*strings)[i];
+        sb_appendf(output, c!("[%zu]: "), i);
+        dump_string(output, string.string, string.count);
         sb_appendf(output, c!("\n"));
-        sb_appendf(output, c!("-- Data Section --\n"));
-        sb_appendf(output, c!("\n"));
-
-        const ROW_SIZE: usize = 12;
-        for i in (0..data.len()).step_by(ROW_SIZE) {
-            sb_appendf(output, c!("%04X:"), i as c_uint);
-            for j in i..(i+ROW_SIZE) {
-                if j < data.len() {
-                    sb_appendf(output, c!(" "));
-                    sb_appendf(output, c!("%02X"), (*data)[j] as c_uint);
-                } else {
-                    sb_appendf(output, c!("   "));
-                }
-            }
-
-            sb_appendf(output, c!(" | "));
-            for j in i..(i+ROW_SIZE).min(data.len()) {
-                let ch = (*data)[j] as char;
-                let c = if ch.is_ascii_whitespace() {
-                    // display all whitespace as a regular space
-                    // stops '\t', '\n', '\b' from messing up the formatting
-                    ' '
-                } else if ch.is_ascii_graphic() {
-                    ch
-                } else {
-                    // display all non-printable characters as '.' (eg. NULL)
-                    '.'
-                };
-                sb_appendf(output, c!("%c"), c as c_uint);
-            }
-
-            sb_appendf(output, c!("\n"));
-        }
     }
 }
 
@@ -360,5 +387,5 @@ pub unsafe fn dump_program(output: *mut String_Builder, p: *const Program) {
     dump_asm_funcs(output, da_slice((*p).asm_funcs));
     dump_extrns(output, da_slice((*p).extrns));
     dump_globals(output, da_slice((*p).globals));
-    dump_data_section(output, da_slice((*p).data));
+    dump_strings(output, da_slice((*p).strings));
 }

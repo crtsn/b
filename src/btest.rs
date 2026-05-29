@@ -20,6 +20,8 @@ pub mod lexer;
 pub mod codegen;
 pub mod shlex;
 pub mod params;
+pub mod codegen_common;
+pub mod errors;
 
 use core::ffi::*;
 use core::cmp;
@@ -129,6 +131,7 @@ pub struct Report {
 pub unsafe fn execute_test(
     // Inputs
     test_folder: *const c_char, name: *const c_char, target: Target, quiet: bool,
+    hist: bool,
     // Outputs
     cmd: *mut Cmd, sb: *mut String_Builder,
 ) -> Option<Outcome> {
@@ -149,6 +152,9 @@ pub unsafe fn execute_test(
     }
     if quiet {
         cmd_append! { cmd, c!("-q") }
+    }
+    if hist {
+        cmd_append! { cmd, c!("-hist") }
     }
     if !cmd_run_sync_and_reset(cmd) {
         return Some(Outcome::BuildFail);
@@ -275,7 +281,7 @@ pub unsafe fn matches_glob(pattern: *const c_char, text: *const c_char) -> Optio
 
 pub unsafe fn record_tests(
     // Inputs
-    test_folder: *const c_char, cases: *const [*const c_char], targets: *const [Target], tt: *mut TestTable, quiet: bool,
+    test_folder: *const c_char, cases: *const [*const c_char], targets: *const [Target], tt: *mut TestTable, quiet: bool, hist: bool,
     // Outputs
     cmd: *mut Cmd, sb: *mut String_Builder,
     reports: *mut Array<Report>, stats_by_target: *mut Array<ReportStats>,
@@ -292,12 +298,12 @@ pub unsafe fn record_tests(
 
         for j in 0..targets.len() {
             let target = (*targets)[j];
-            if let Some(test_row) = test_table_find_row(tt, case_name, target) {
+            if let Some(test_row) = test_table_find_row(tt, case_name, target, hist) {
                 match (*test_row).state {
                     TestState::Enabled => {
                         let outcome = execute_test(
                             // Inputs
-                            test_folder, case_name, target, quiet,
+                            test_folder, case_name, target, quiet, hist,
                             // Outputs
                             cmd, sb,
                         )?;
@@ -315,7 +321,7 @@ pub unsafe fn record_tests(
             } else {
                 let outcome = execute_test(
                     // Inputs
-                    test_folder, case_name, target, quiet,
+                    test_folder, case_name, target, quiet, hist,
                     // Outputs
                     cmd, sb,
                 )?;
@@ -327,6 +333,7 @@ pub unsafe fn record_tests(
                             expected_stdout: c!(""),
                             state: TestState::Enabled,
                             comment: c!("Failed to build on record"),
+                            hist
                         });
                         da_append(&mut report.statuses, ReportStatus::BuildFail)
                     },
@@ -337,6 +344,7 @@ pub unsafe fn record_tests(
                             expected_stdout: c!(""),
                             state: TestState::Enabled,
                             comment: c!("Failed to run on record"),
+                            hist
                         });
                         da_append(&mut report.statuses, ReportStatus::RunFail)
                     }
@@ -347,6 +355,7 @@ pub unsafe fn record_tests(
                             expected_stdout: stdout,
                             state: TestState::Enabled,
                             comment: c!(""),
+                            hist
                         });
                         da_append(&mut report.statuses, ReportStatus::OK);
                     }
@@ -410,6 +419,7 @@ pub struct TestRow {
     pub expected_stdout: *const c_char,
     pub state: TestState,
     pub comment: *const c_char,
+    pub hist: bool,
 }
 
 type TestTable = Array<TestRow>;
@@ -420,10 +430,10 @@ type TestTable = Array<TestRow>;
 // out of the question of course since we are torturing ourselves with Crust. We could implement our own HashMap or we could
 // maybe sort this array on loading it from the JSON file and do Binary Search. Sorting has additional benefit of keeping
 // the JSON file tidy.
-pub unsafe fn test_table_find_row(tt: *mut TestTable, case_name: *const c_char, target: Target) -> Option<*mut TestRow> {
+pub unsafe fn test_table_find_row(tt: *mut TestTable, case_name: *const c_char, target: Target, hist: bool) -> Option<*mut TestRow> {
     for i in 0..(*tt).count {
         let row = (*tt).items.add(i);
-        if strcmp((*row).target.api.name(), target.api.name()) == 0 && strcmp((*row).case_name, case_name) == 0 {
+        if strcmp((*row).target.api.name(), target.api.name()) == 0 && strcmp((*row).case_name, case_name) == 0 && (*row).hist == hist {
             return Some(row)
         }
     }
@@ -455,6 +465,7 @@ pub unsafe fn load_tt_from_json_file_if_exists(
             let mut expected_stdout: *const c_char = c!("");
             let mut state = TestState::Enabled;
             let mut comment: *const c_char = c!("");
+            let mut hist = false;
 
             jimp_object_begin(jimp)?;
             'row: while jimp_object_member(jimp) {
@@ -491,6 +502,11 @@ pub unsafe fn load_tt_from_json_file_if_exists(
                     comment = strdup((*jimp).string); // TODO: memory leak
                     continue 'row;
                 }
+                if strcmp((*jimp).string, c!("hist")) == 0 {
+                    jimp_boolean(jimp)?;
+                    hist = (*jimp).boolean;
+                    continue 'row;
+                }
 
                 jimp_diagf(jimp, c!("ERROR: unknown test row field `%s`\n"), (*jimp).string);
                 return None;
@@ -511,12 +527,12 @@ pub unsafe fn load_tt_from_json_file_if_exists(
                 continue 'table;
             }
 
-            if let Some(_existing_row) = test_table_find_row(&mut tt, case_name, target) {
+            if let Some(_existing_row) = test_table_find_row(&mut tt, case_name, target, hist) {
                 (*jimp).token_start = saved_point;
                 // TODO: report the location of existing_row here as a NOTE
                 // This requires keeping track of location in TestRow structure. Which requires location tracking capabilities
                 // comparable to lexer.rs but in jim/jimp.
-                jimp_diagf(jimp, c!("WARNING: Redefinition of the row case `%s`, target `%s`. We are using only the first definition. All the rest are gonna be prunned"), case_name, target.api.name());
+                jimp_diagf(jimp, c!("WARNING: Redefinition of the row case `%s`, target `%s`, hist: `%c`. We are using only the first definition. All the rest are gonna be prunned"), case_name, target.api.name(), if hist {'Y'} else {'N'});
                 // TODO: memory leak, we are dropping the whole row here
                 continue 'table;
             }
@@ -535,6 +551,7 @@ pub unsafe fn load_tt_from_json_file_if_exists(
                 expected_stdout,
                 state,
                 comment,
+                hist
             });
         }
         jimp_array_end(jimp)?;
@@ -566,6 +583,8 @@ pub unsafe fn save_tt_to_json_file(
         jim_string(jim, (*row).state.name());
         jim_member_key(jim, c!("comment"));
         jim_string(jim, (*row).comment);
+        jim_member_key(jim, c!("hist"));
+        jim_bool(jim, (*row).hist as c_int);
 
         jim_object_end(jim);
     }
@@ -577,7 +596,7 @@ pub unsafe fn save_tt_to_json_file(
 pub unsafe fn replay_tests(
     // TODO: The Inputs and the Outputs want to be their own entity. But what should they be called?
     // Inputs
-    test_folder: *const c_char, cases: *const [*const c_char], targets: *const [Target], mut tt: TestTable, quiet: bool,
+    test_folder: *const c_char, cases: *const [*const c_char], targets: *const [Target], mut tt: TestTable, quiet: bool, hist: bool,
     // Outputs
     cmd: *mut Cmd, sb: *mut String_Builder, reports: *mut Array<Report>, stats_by_target: *mut Array<ReportStats>, jim: *mut Jim,
 ) -> Option<()> {
@@ -594,12 +613,12 @@ pub unsafe fn replay_tests(
 
         for j in 0..targets.len() {
             let target = (*targets)[j];
-            if let Some(row) = test_table_find_row(&mut tt, case_name, target) {
+            if let Some(row) = test_table_find_row(&mut tt, case_name, target, hist) {
                 match (*row).state {
                     TestState::Enabled => {
                         let outcome = execute_test(
                             // Inputs
-                            test_folder, case_name, target, quiet,
+                            test_folder, case_name, target, quiet, hist,
                             // Outputs
                             cmd, sb,
                         )?;
@@ -626,7 +645,7 @@ pub unsafe fn replay_tests(
             } else {
                 let outcome = execute_test(
                     // Inputs
-                    test_folder, case_name, target, quiet,
+                    test_folder, case_name, target, quiet, hist,
                     // Outputs
                     cmd, sb,
                 )?;
@@ -683,6 +702,7 @@ impl Action {
     }
 }
 
+#[must_use]
 pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
     let all_targets = codegen::load_targets()?;
 
@@ -695,6 +715,8 @@ pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
     let cases_flags          = flag_list(c!("c"), c!("Test cases to select for testing. Can be a glob pattern."));
     let exclude_cases_flags  = flag_list(c!("xc"), c!("Test cases to exclude from selected ones. Can be a glob pattern"));
     let list_cases           = flag_bool(c!("clist"), false, c!("Print the list of selected test cases"));
+    
+    let historical  = flag_bool(c!("hist"), false, c!("Runs tests that has hist withcompiler with -hist flag"));
 
     let action_flag          = flag_str(c!("a"), default_action.name(), c!("Action to perform. Use -alist to get the list of available actions"));
     let list_actions         = flag_bool(c!("alist"), false, c!("Print the list of all available actions."));
@@ -885,6 +907,7 @@ pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
             record_tests(
                 // Inputs
                 *test_folder, da_slice(cases), da_slice(targets), &mut tt, *quiet,
+                *historical,
                 // Outputs
                 &mut cmd, &mut sb, &mut reports, &mut stats_by_target,
             )?;
@@ -895,6 +918,7 @@ pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
             replay_tests(
                 // Inputs
                 *test_folder, da_slice(cases), da_slice(targets), tt, *quiet,
+                *historical,
                 // Outputs
                 &mut cmd, &mut sb, &mut reports, &mut stats_by_target, &mut jim,
             );
@@ -922,7 +946,7 @@ pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
                 for j in 0..targets.count {
                     let target = *targets.items.add(j);
                     log(Log_Level::INFO, c!("disabling %-*s for %-*s"), case_width, case_name, target_width, target.api.name());
-                    if let Some(row) = test_table_find_row(&mut tt, case_name, target) {
+                    if let Some(row) = test_table_find_row(&mut tt, case_name, target, *historical) {
                         (*row).state = TestState::Disabled;
                         if !(*comment).is_null() {
                             (*row).comment = *comment;
@@ -938,6 +962,7 @@ pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
                             } else {
                                 *comment
                             },
+                            hist: *historical,
                         });
                     }
                 }
