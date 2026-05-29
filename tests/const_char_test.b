@@ -10,8 +10,10 @@ E00 48;
 E01 041;
 E02[1] 0130;
 E03[034] 0114, 0112;
-/* E04 010210110099989796; */ /* weird error */
-E05 0102101100;
+/* E04 010210110099989796; */ /* weird error if has digits > 9 */
+E05 01777777777777777777777, 0;
+/* A+B=C -> ((0103<<32)+(0075<<24)+(0102<<16)+(0053<<8)+0101) */
+E06 04147520425501, 0;
 
 E10 'UM';
 E11[1] 'GI';
@@ -34,7 +36,7 @@ main()
     printf("%c*n", E01); fflush(stdout);
     printf("%c*n", *E02); fflush(stdout);
     printf("%c*n", E03[1]); fflush(stdout);
-    printf("%s*n", E05); fflush(stdout);
+    printf("%s*n", &E06); fflush(stdout);
 
     printf("%c%c*n", E10, *(&E10 + 1)); fflush(stdout);
     printf("%c%c*n", *E11, *(E11 + 1)); fflush(stdout);

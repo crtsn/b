@@ -445,19 +445,24 @@ unsafe fn parse_number(l: *mut Lexer, radix: Radix, report_point: Parse_Point) -
             break;
         };
 
+        diagf!(loc(l), c!("LEXER INFO: DIGIT: %lu\n"), d as c_uint);
+        diagf!(loc(l), c!("LEXER INFO: int_number BEFORE MUL = %lu\n"), (*l).int_number);
         let Some(r) = (*l).int_number.checked_mul(radix as u64) else {
             (*l).parse_point = report_point;
             diagf!(loc(l), c!("LEXER ERROR: Constant integer overflow\n"));
             return None;
         };
         (*l).int_number = r;
+        diagf!(loc(l), c!("LEXER INFO: int_number AFTER MUL = %lu\n"), (*l).int_number);
 
+        diagf!(loc(l), c!("LEXER INFO: int_number BEFORE ADD = %lu\n"), (*l).int_number);
         let Some(r) = (*l).int_number.checked_add(d as u64) else {
             (*l).parse_point = report_point;
             diagf!(loc(l), c!("LEXER ERROR: Constant integer overflow.\n"));
             return None;
         };
         (*l).int_number = r;
+        diagf!(loc(l), c!("LEXER INFO: int_number AFTER ADD = %lu\n"), (*l).int_number);
         skip_char(l);
     };
 
