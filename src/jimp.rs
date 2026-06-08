@@ -18,6 +18,7 @@ pub struct Jimp {
     pub boolean: bool,
 }
 
+#[must_use]
 pub unsafe fn jimp_boolean(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_bool"]
@@ -30,6 +31,7 @@ pub unsafe fn jimp_boolean(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_number(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_number"]
@@ -42,6 +44,7 @@ pub unsafe fn jimp_number(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_string(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_string"]
@@ -54,6 +57,7 @@ pub unsafe fn jimp_string(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_object_begin(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_object_begin"]
@@ -66,6 +70,7 @@ pub unsafe fn jimp_object_begin(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_object_end(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_object_end"]
@@ -78,6 +83,7 @@ pub unsafe fn jimp_object_end(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_array_begin(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_array_begin"]
@@ -90,6 +96,7 @@ pub unsafe fn jimp_array_begin(jimp: *mut Jimp) -> Option<()> {
     }
 }
 
+#[must_use]
 pub unsafe fn jimp_array_end(jimp: *mut Jimp) -> Option<()> {
     extern "C" {
         #[link_name="jimp_array_end"]

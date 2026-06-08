@@ -11,6 +11,7 @@ use crate::lexer;
 use crate::lexer::{Token, loc};
 use crate::targets::TargetAPI;
 use crate::params::*;
+use crate::codegen_common::{parse_int_literal_to_u8, parse_char_literal_to_u8, parse_int_literal_to_u16, parse_char_literal_to_u16_le};
 
 // UXN memory map
 // 0x0000 - 0x00ff - zero page
@@ -78,6 +79,7 @@ pub unsafe fn link_label(a: *mut Assembler, label: usize, addr: usize) {
     *(*a).resolved_addresses.items.add(label) = addr as u16;
 }
 
+#[must_use]
 pub unsafe fn apply_patches(output: *mut String_Builder, a: *mut Assembler) -> Option<()> {
     for i in 0..(*a).patches.count {
         let patch = *(*a).patches.items.add(i);
@@ -109,6 +111,7 @@ const SP: u8 = 0;
 const BP: u8 = 2;
 const FIRST_ARG: u8 = 4;
 
+#[must_use]
 pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const [AsmFunc], assembler: *mut Assembler) -> Option<()> {
     for i in 0..asm_funcs.len() {
         let asm_func = (*asm_funcs)[i];
@@ -222,7 +225,7 @@ pub unsafe fn new(a: *mut arena::Arena, args: *const [*const c_char]) -> Option<
 
 pub unsafe fn generate_program(
     gen: *mut c_void, program: *const Program, program_path: *const c_char, _garbage_base: *const c_char,
-    _nostdlib: bool, debug: bool,
+    _nostdlib: bool, debug: bool, error_count: *mut usize, 
 ) -> Option<()> {
     let gen = gen as *mut Uxn;
     let output = &mut (*gen).output;
@@ -257,12 +260,12 @@ pub unsafe fn generate_program(
     generate_asm_funcs(output, da_slice((*program).asm_funcs), &mut assembler)?;
     generate_extrns(da_slice((*program).extrns), da_slice((*program).funcs), da_slice((*program).asm_funcs), da_slice((*program).globals))?;
     generate_data_section(output, da_slice((*program).data), &mut assembler);
-    generate_globals(output, da_slice((*program).globals), &mut assembler);
+    generate_globals(output, da_slice((*program).globals), &mut assembler)?;
 
     apply_patches(output, &mut assembler)?;
 
     write_entire_file(program_path, (*output).items as *const c_void, (*output).count)?;
-    log(Log_Level::INFO, c!("generated %s"), program_path);
+    log(Log_Level::INFO, c!("+generated %s"), program_path);
 
     Some(())
 }
@@ -278,6 +281,7 @@ pub unsafe fn run_program(
     Some(())
 }
 
+#[must_use]
 pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func], assembler: &mut Assembler) -> Option<()> {
     for i in 0..funcs.len() {
         generate_function((*funcs)[i].name, (*funcs)[i].name_loc, (*funcs)[i].params_count, (*funcs)[i].auto_vars_count, da_slice((*funcs)[i].body), output, assembler)?;
@@ -285,6 +289,7 @@ pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func], 
     Some(())
 }
 
+#[must_use]
 pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder, assembler: *mut Assembler) -> Option<()> {
     link_label(assembler, get_or_create_label_by_name(assembler, name), (*output).count);
 
@@ -337,7 +342,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
         match op.opcode {
             Op::Bogus => unreachable!("bogus-amogus"),
             Op::UnaryNot {result, arg} => {
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 // if arg == 0 then 1 else 0
                 write_op(output, UxnOp::LIT2);
                 write_short(output, 0);
@@ -351,25 +356,25 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
             }
             Op::Negate {result, arg} => {
                 write_lit2(output, 0);
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 write_op(output, UxnOp::SUB2);
                 store_auto(output, result);
             }
             Op::Binop {binop: Binop::Plus, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::ADD2);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::Minus, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::SUB2);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::Mult, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::MUL2);
                 store_auto(output, index);
             }
@@ -377,7 +382,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 // TODO: long enough to be an intrinsic
                 const A: u8 = FIRST_ARG;
                 const B: u8 = FIRST_ARG + 2;
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 write_lit(output, A);
                 write_op(output, UxnOp::STZ2k);
                 write_op(output, UxnOp::POP);
@@ -393,7 +398,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 write_op(output, UxnOp::STH2kr);
                 write_op(output, UxnOp::ADD2);
 
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_lit(output, B);
                 write_op(output, UxnOp::STZ2k);
                 write_op(output, UxnOp::POP);
@@ -432,7 +437,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
             }
             Op::Binop {binop: Binop::Div, index, lhs, rhs} => {
                 // TODO: long enough to be an intrinsic
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 // extract sign A, stash it in the return stack
                 write_op(output, UxnOp::DUP2);
                 write_lit(output, 0x0f);
@@ -445,7 +450,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 write_op(output, UxnOp::STH2kr);
                 write_op(output, UxnOp::ADD2);
 
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 // extract sign B, stash it in the return stack
                 write_op(output, UxnOp::DUP2);
                 write_lit(output, 0x0f);
@@ -473,10 +478,10 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::LessEqual, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
                 write_op(output, UxnOp::GTH2);
@@ -487,10 +492,10 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::Less, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
                 write_op(output, UxnOp::LTH2);
@@ -499,10 +504,10 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::Greater, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
                 write_op(output, UxnOp::GTH2);
@@ -511,26 +516,26 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::Equal, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::EQU2);
                 write_lit(output, 0);
                 write_op(output, UxnOp::SWP);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::NotEqual, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::NEQ2);
                 write_lit(output, 0);
                 write_op(output, UxnOp::SWP);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::GreaterEqual, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_lit2(output, 0x8000);
                 write_op(output, UxnOp::EOR2);
                 write_op(output, UxnOp::LTH2);
@@ -541,20 +546,20 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::BitOr, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::ORA2);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::BitAnd, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::AND2);
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::BitShl, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::NIP);
                 write_lit(output, 0x0f);
                 write_op(output, UxnOp::AND);
@@ -564,8 +569,8 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::Binop {binop: Binop::BitShr, index, lhs, rhs} => {
-                load_arg(lhs, op.loc, output, assembler);
-                load_arg(rhs, op.loc, output, assembler);
+                load_arg(lhs, op.loc, output, assembler)?;
+                load_arg(rhs, op.loc, output, assembler)?;
                 write_op(output, UxnOp::NIP);
                 write_lit(output, 0x0f);
                 write_op(output, UxnOp::AND);
@@ -573,17 +578,17 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, index);
             }
             Op::AutoAssign {index, arg} => {
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 store_auto(output, index);
             }
             Op::ExternalAssign {name, arg} => {
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 write_op(output, UxnOp::LIT2);
                 write_label_abs(output, get_or_create_label_by_name(assembler, name), assembler, 0);
                 write_op(output, UxnOp::STA2);
             }
             Op::Store {index, arg} => {
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 write_lit_ldz2(output, BP);
                 write_lit2(output, (index * 2) as u16);
                 write_op(output, UxnOp::SUB2);
@@ -595,11 +600,11 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                     missingf!(op.loc, c!("Too many function call arguments. We support only %d but %zu were provided\n"), MAX_ARGS, args.count);
                 }
                 for i in 0..args.count {
-                    load_arg(*args.items.add(i), op.loc, output, assembler);
+                    load_arg(*args.items.add(i), op.loc, output, assembler)?;
                     write_lit_stz2(output, FIRST_ARG + (i as u8) * 2)
                 }
 
-                call_arg(fun, op.loc, output, assembler);
+                call_arg(fun, op.loc, output, assembler)?;
                 write_lit_ldz2(output, FIRST_ARG);
                 store_auto(output, result);
             }
@@ -614,7 +619,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 write_label_rel(output, *labels.items.add(label), assembler, 0);
             }
             Op::JmpIfNotLabel {label, arg} => {
-                load_arg(arg, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
                 write_lit2(output, 0);
                 write_op(output, UxnOp::EQU2);
                 write_op(output, UxnOp::JCI);
@@ -623,7 +628,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
             Op::Return {arg} => {
                 // Put return value in the FIRST_ARG
                 if let Some(arg) = arg {
-                    load_arg(arg, op.loc,  output, assembler);
+                    load_arg(arg, op.loc,  output, assembler)?;
                 } else {
                     write_lit2(output, 0);
                 }
@@ -646,8 +651,8 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 write_op(output, UxnOp::JMP2r);
             }
             Op::Index {result, arg, offset} => {
-                load_arg(arg, op.loc, output, assembler);
-                load_arg(offset, op.loc, output, assembler);
+                load_arg(arg, op.loc, output, assembler)?;
+                load_arg(offset, op.loc, output, assembler)?;
                 write_lit(output, 0x10);
                 write_op(output, UxnOp::SFT2);
                 write_op(output, UxnOp::ADD2);
@@ -753,20 +758,23 @@ pub unsafe fn write_infinite_loop(output: *mut String_Builder) {
     write_short(output, 0xfffd);
 }
 
-pub unsafe fn call_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assembler: *mut Assembler) {
+#[must_use]
+pub unsafe fn call_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assembler: *mut Assembler) -> Option<()> {
     match arg {
         Arg::RefExternal(name) | Arg::External(name) => {
             write_op(output, UxnOp::JSI);
             write_label_rel(output, get_or_create_label_by_name(assembler, name), assembler, 0);
         }
         arg => {
-            load_arg(arg, loc, output, assembler);
+            load_arg(arg, loc, output, assembler)?;
             write_op(output, UxnOp::JSR2);
         }
     };
+    Some(())
 }
 
-pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assembler: *mut Assembler) {
+#[must_use]
+pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assembler: *mut Assembler) -> Option<()> {
     match arg {
         Arg::Deref(index) => {
             write_lit_ldz2(output, BP);
@@ -787,12 +795,26 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
             write_op(output, UxnOp::SUB2);
             write_op(output, UxnOp::LDA2);
         }
-        Arg::Literal(value) => {
-            if value >= 65536 {
-                diagf!(loc, c!("WARNING: constant `%llu` out of range for 16 bits\n"), value);
+        Arg::IntLiteral(int_literal, radix) => {
+            let value: u16;
+            if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                value = v;
+            } else {
+                diagf!(loc, c!("ERROR: uxn: constant %s out of range for 16 bits\n"), int_literal);
+                return None;
             }
-            write_lit2(output, value as u16);
-        }
+            write_lit2(output, value);
+        },
+        Arg::CharLiteral(char_literal) => {
+            let value: u16;
+            if let Ok(v) = parse_char_literal_to_u16_le(char_literal) {
+                value = v;
+            } else {
+                diagf!(loc, c!("ERROR: uxn: constant '%s' out of range for 16 bits\n"), char_literal);
+                return None;
+            }
+            write_lit2(output, value);
+        },
         Arg::DataOffset(offset) => {
             write_op(output, UxnOp::LIT2);
             write_label_abs(output, (*assembler).data_section_label, assembler, 0);
@@ -811,6 +833,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
         }
         Arg::Bogus => unreachable!("bogus-amogus"),
     }
+    Some(())
 }
 
 pub unsafe fn store_auto(output: *mut String_Builder, index: usize) {
@@ -820,6 +843,7 @@ pub unsafe fn store_auto(output: *mut String_Builder, index: usize) {
     write_op(output, UxnOp::STA2);
 }
 
+#[must_use]
 pub unsafe fn generate_extrns(extrns: *const [*const c_char], funcs: *const [Func], asm_funcs: *const[AsmFunc], globals: *const [Global]) -> Option<()> {
     'skip_function_or_global: for i in 0..extrns.len() {
         // assemble a few "stdlib" functions which can't be programmed in B
@@ -848,7 +872,8 @@ pub unsafe fn generate_extrns(extrns: *const [*const c_char], funcs: *const [Fun
     Some(())
 }
 
-pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Global], assembler: *mut Assembler) {
+#[must_use]
+pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Global], assembler: *mut Assembler) -> Option<()> {
     for i in 0..globals.len() {
         let global = (*globals)[i];
         link_label(assembler, get_or_create_label_by_name(assembler, global.name), (*output).count);
@@ -859,8 +884,49 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
         }
         for j in 0..global.values.count {
             match *global.values.items.add(j) {
-                ImmediateValue::Literal(lit) => {
-                    write_short(output, lit as u16);
+                ImmediateValue::IntLiteral(int_literal, radix) => {
+                    let value: u16;
+                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                        value = v;
+                    } else {
+                        let prefix = match radix {
+                            Radix::Dec => c!(""),
+                            Radix::Oct => c!("0"),
+                            Radix::Hex => c!("0x"),
+                            _ => unreachable!()
+                        };
+                        let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 16 bits\n"), prefix);
+                        diagf!(*global.value_locs.items.add(j), fmt_str, int_literal);
+                        return None;
+                    }
+                    write_short(output, value);
+                }
+                ImmediateValue::NegatedIntLiteral(int_literal, radix) => {
+                    let value: u16;
+                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                        value = !v + 1;
+                    } else {
+                        let prefix = match radix {
+                            Radix::Dec => c!(""),
+                            Radix::Oct => c!("0"),
+                            Radix::Hex => c!("0x"),
+                            _ => unreachable!()
+                        };
+                        let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 16 bits\n"), prefix);
+                        diagf!(*global.value_locs.items.add(j), fmt_str, int_literal);
+                        return None;
+                    }
+                    write_short(output, value);
+                }
+                ImmediateValue::CharLiteral(char_literal) => {
+                    let value: u16;
+                    if let Ok(v) = parse_char_literal_to_u16_le(char_literal) {
+                        value = v;
+                    } else {
+                        diagf!(*global.value_locs.items.add(j), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), char_literal);
+                        return None;
+                    }
+                    write_short(output, value);
                 }
                 ImmediateValue::Name(name) => {
                     write_label_abs(output, get_or_create_label_by_name(assembler, name), assembler, 0);
@@ -874,6 +940,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
             write_short(output, 0);
         }
     }
+    Some(())
 }
 
 pub unsafe fn generate_data_section(output: *mut String_Builder, data: *const [u8], assembler: *mut Assembler) {
@@ -1218,6 +1285,7 @@ pub unsafe fn has_immediate(op: UxnOp) -> bool {
     has_byte_immediate(op) || has_short_immediate(op)
 }
 
+#[must_use]
 pub unsafe fn process_asm_statements(output: *mut String_Builder, asm_stmts: *const [AsmStmt], assembler: *mut Assembler) -> Option<()> {
     for i in 0..asm_stmts.len() {
         let asm_stmt = (*asm_stmts)[i];
@@ -1226,6 +1294,7 @@ pub unsafe fn process_asm_statements(output: *mut String_Builder, asm_stmts: *co
     Some(())
 }
 
+#[must_use]
 pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmStmt, assembler: *mut Assembler) -> Option<()> {
     // TODO: leaky function, but beware holding onto strings produced by the lexer
 
@@ -1288,12 +1357,62 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                         return None;
                     }
                 }
-                Token::IntLit | Token::CharLit => {
+                Token::IntLit => {
                     // immediate number literal
                     if has_short_immediate(opcode) {
-                        write_short(output, l.int_number as u16);
+                        let value: u16;
+                        if let Ok(v) = parse_int_literal_to_u16(l.string, l.radix) {
+                            value = v;
+                        } else {
+                            let prefix = match l.radix {
+                                Radix::Dec => c!(""),
+                                Radix::Oct => c!("0"),
+                                Radix::Hex => c!("0x"),
+                                _ => unreachable!()
+                            };
+                            let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 16 bits\n"), prefix);
+                            diagf!(loc(&mut l), fmt_str, l.string);
+                            return None;
+                        }
+                        write_short(output, value);
                     } else {
-                        write_byte(output, l.int_number as u8);
+                        let value: u8;
+                        if let Ok(v) = parse_int_literal_to_u8(l.string, l.radix) {
+                            value = v;
+                        } else {
+                            let prefix = match l.radix {
+                                Radix::Dec => c!(""),
+                                Radix::Oct => c!("0"),
+                                Radix::Hex => c!("0x"),
+                                _ => unreachable!()
+                            };
+                            let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 8 bits\n"), prefix);
+                            diagf!(loc(&mut l), fmt_str, l.string);
+                            return None;
+                        }
+                        write_byte(output, value);
+                    }
+                }
+                Token::CharLit => {
+                    // immediate number literal
+                    if has_short_immediate(opcode) {
+                        let value: u16;
+                        if let Ok(v) = parse_char_literal_to_u16_le(l.string) {
+                            value = v;
+                        } else {
+                            diagf!(loc(&mut l), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), l.string);
+                            return None;
+                        }
+                        write_short(output, value);
+                    } else {
+                        let value: u8;
+                        if let Ok(v) = parse_char_literal_to_u8(l.string) {
+                            value = v;
+                        } else {
+                            diagf!(loc(&mut l), c!("ERROR: uxn: char constant '%s' out of range for 8 bits\n"), l.string);
+                            return None;
+                        }
+                        write_byte(output, value);
                     }
                 }
                 _ => {

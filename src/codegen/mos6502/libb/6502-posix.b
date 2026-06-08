@@ -7,17 +7,17 @@ abort() {
 }
 
 putchar(c) {
-    0xFFEF(c);
+    0177757(c);
 }
 
 char __asm__(
     "TSX",
     "CLC",
-    "ADC $0103,X", // i&0xFF
-    "STA $00", // we can safely use zero-page, as our assembler
-               // doesn't expect it to be preserved across op-boundaries
+    "ADC $0103,X", /* i&0xFF */
+    "STA $00", /* we can safely use zero-page, as our assembler */
+               /* doesn't expect it to be preserved across op-boundaries */
     "TYA",
-    "ADC $0104,X", // i&0xFF00 >> 8
+    "ADC $0104,X", /* i&0xFF00 >> 8 */
     "STA $01",
     "LDY #0",
     "LDA ($00),Y",
@@ -27,11 +27,11 @@ char __asm__(
 lchar __asm__(
     "TSX",
     "CLC",
-    "ADC $0103,X", // i&0xFF
-    "STA $00", // we can safely use zero-page, as our assembler
-               // doesn't expect it to be preserved across op-boundaries
+    "ADC $0103,X", /* i&0xFF */
+    "STA $00", /* we can safely use zero-page, as our assembler */
+               /* doesn't expect it to be preserved across op-boundaries */
     "TYA",
-    "ADC $0104,X", // i&0xFF00 >> 8
+    "ADC $0104,X", /* i&0xFF00 >> 8 */
     "STA $01",
     "LDA $0105,X",
     "LDY #0",
@@ -45,14 +45,14 @@ fputc(c, fd) {
 }
 
 /* TODO: actually allocate something */
-__heap_ptr 0x0200;
+__heap_ptr 01000;
 malloc(size) {
     extrn printf;
     auto ptr;
     ptr = __heap_ptr;
-    __heap_ptr += size;
-    if (__heap_ptr >= 0x1000) {
-        printf("Allocation reached end: %p\nTODO: allow allocating more, implement free\n", __heap_ptr);
+    __heap_ptr =+ size;
+    if (__heap_ptr >= 010000) {
+        printf("Allocation reached end: %p*nTODO: allow allocating more, implement free*n", __heap_ptr);
         abort();
     }
     return (ptr);
@@ -129,7 +129,7 @@ printn(n, b, sign) {
     if(a=__div(n, b)) /* assignment, not test for equality */
         printn(a, b, 0); /* recursive */
     c = __rem(n,b) + '0';
-    if (c > '9') c += 7;
+    if (c > '9') c =+ 7;
     putchar(c);
 }
 
@@ -142,12 +142,12 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) {
 
     c = char(str, i);
     while (c != 0) {
-        if (c == '\n') {
-            putchar(0xD); // \r
+        if (c == '*n') {
+            putchar(015); /* \r */
         }
 
         if(c == '%') {
-            i += 1;
+            i =+ 1;
             c = char(str, i);
             if (c == 0) {
                 return;
@@ -158,6 +158,8 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) {
             } else if (c == 'p') {
                 putchar('$');
                 printn(*arg, 16, 0);
+            } else if (c == 'o') {
+                printn(*arg, 8, 0);
             } else if (c == 'c') {
                 putchar(*arg);
             } else if (c == 's') { /* clobbers `c`, the last one */
@@ -169,9 +171,9 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) {
                 goto while_end;
             } else {
                 putchar('%');
-                arg += 2; /* word size */
+                arg =+ 2; /* word size */
             }
-            arg -= 2; /* word size */
+            arg =- 2; /* word size */
         } else {
             putchar(c); /* ECHO */
         }
@@ -201,6 +203,6 @@ memset(addr, val, size) {
     i = 0;
     while (i < size) {
         lchar(addr, i, val);
-        i += 1;
+        i =+ 1;
     }
 }

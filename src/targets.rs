@@ -39,9 +39,10 @@ impl Target {
         garbage_base: *const c_char,
         nostdlib: bool,
         debug: bool,
+        error_count: *mut usize, 
     ) -> Option<()> {
         match self.api {
-            TargetAPI::V1 { build, .. } => build(gen, program, program_path, garbage_base, nostdlib, debug),
+            TargetAPI::V1 { build, .. } => build(gen, program, program_path, garbage_base, nostdlib, debug, error_count),
         }
     }
     pub unsafe fn run (
@@ -61,6 +62,7 @@ impl Target {
     }
 }
 
+#[must_use]
 pub unsafe fn register_apis(targets: *mut Array<Target>, apis: *const [TargetAPI], codegen_name: *const c_char) -> Option<()> {
     for i in 0..apis.len() {
         let api = (*apis)[i];
@@ -96,13 +98,14 @@ pub enum TargetAPI {
             garbage_base: *const c_char,
             nostdlib: bool,
             debug: bool,
+            error_count: *mut usize, 
         ) -> Option<()>,
         run: unsafe fn(
             gen: *mut c_void,
             program_path: *const c_char,
             run_args: *const [*const c_char],
         ) -> Option<()>,
-    }
+    },
 }
 
 impl TargetAPI {

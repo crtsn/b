@@ -2,6 +2,7 @@ use core::ffi::*;
 use core::mem::zeroed;
 use crate::nob::*;
 use crate::crust::libc::*;
+use crate::ir::{Radix};
 
 #[derive(Clone, Copy)]
 pub struct Loc {
@@ -169,48 +170,32 @@ pub unsafe fn display_token(token: Token) -> *const c_char {
 //   so it's checked earlier.
 //   TODO: Maybe we should create a function that analyses the PUNCTS and orders them accordingly, so this notice is
 //   not needed
-pub const PUNCTS: *const [(*const c_char, Token)] = &[
-    (c!("?"), Token::Question),
-    (c!("{"), Token::OCurly),
-    (c!("}"), Token::CCurly),
-    (c!("("), Token::OParen),
-    (c!(")"), Token::CParen),
-    (c!("["), Token::OBracket),
-    (c!("]"), Token::CBracket),
-    (c!(";"), Token::SemiColon),
-    (c!(":"), Token::Colon),
-    (c!(","), Token::Comma),
-    (c!("--"), Token::MinusMinus),
+pub const MODERN_PUNCTS: *const [(*const c_char, Token)] = &[
     (c!("-="), Token::MinusEq),
-    (c!("-"), Token::Minus),
-    (c!("++"), Token::PlusPlus),
     (c!("+="), Token::PlusEq),
-    (c!("+"), Token::Plus),
     (c!("*="), Token::MulEq),
-    (c!("*"), Token::Mul),
     (c!("%="), Token::ModEq),
-    (c!("%"), Token::Mod),
     (c!("/="), Token::DivEq),
-    (c!("/"), Token::Div),
     (c!("|="), Token::OrEq),
-    (c!("|"), Token::Or),
     (c!("&="), Token::AndEq),
-    (c!("&"), Token::And),
-    (c!("=="), Token::EqEq),
-    (c!("="), Token::Eq),
-    (c!("!="), Token::NotEq),
-    (c!("!"), Token::Not),
     (c!("<<="), Token::ShlEq),
-    (c!("<<"), Token::Shl),
-    (c!("<="), Token::LessEq),
-    (c!("<"), Token::Less),
     (c!(">>="), Token::ShrEq),
-    (c!(">>"), Token::Shr),
-    (c!(">="), Token::GreaterEq),
-    (c!(">"), Token::Greater),
 ];
 
 pub const HISTORICAL_PUNCTS: *const [(*const c_char, Token)] = &[
+    (c!("=-"), Token::MinusEq),
+    (c!("=+"), Token::PlusEq),
+    (c!("=*"), Token::MulEq),
+    (c!("=%"), Token::ModEq),
+    (c!("=/"), Token::DivEq),
+    (c!("=|"), Token::OrEq),
+    (c!("=&"), Token::AndEq),
+    (c!("=="), Token::EqEq),
+    (c!("=<<"), Token::ShlEq),
+    (c!("=>>"), Token::ShrEq),
+];
+
+pub const COMMON_PUNCTS: *const [(*const c_char, Token)] = &[
     (c!("?"), Token::Question),
     (c!("{"), Token::OCurly),
     (c!("}"), Token::CCurly),
@@ -222,36 +207,27 @@ pub const HISTORICAL_PUNCTS: *const [(*const c_char, Token)] = &[
     (c!(":"), Token::Colon),
     (c!(","), Token::Comma),
     (c!("--"), Token::MinusMinus),
-    (c!("=-"), Token::MinusEq),
     (c!("-"), Token::Minus),
     (c!("++"), Token::PlusPlus),
-    (c!("=+"), Token::PlusEq),
     (c!("+"), Token::Plus),
-    (c!("=*"), Token::MulEq),
+    (c!("-"), Token::Minus),
     (c!("*"), Token::Mul),
-    (c!("=%"), Token::ModEq),
     (c!("%"), Token::Mod),
-    (c!("=/"), Token::DivEq),
     (c!("/"), Token::Div),
-    (c!("=|"), Token::OrEq),
     (c!("|"), Token::Or),
-    (c!("=&"), Token::AndEq),
     (c!("&"), Token::And),
     (c!("=="), Token::EqEq),
     (c!("!="), Token::NotEq),
     (c!("!"), Token::Not),
-    (c!("=<<"), Token::ShlEq),
     (c!("<<"), Token::Shl),
     (c!("<="), Token::LessEq),
     (c!("<"), Token::Less),
-    (c!("=>>"), Token::ShrEq),
     (c!(">>"), Token::Shr),
     (c!(">="), Token::GreaterEq),
 
     (c!("="), Token::Eq),
     (c!(">"), Token::Greater),
 ];
-
 const KEYWORDS: *const [(*const c_char, Token)] = &[
     (c!("auto"), Token::Auto),
     (c!("extrn"), Token::Extrn),
@@ -284,7 +260,7 @@ pub struct Lexer {
     pub string_storage: String_Builder,
     pub token: Token,
     pub string: *const c_char,
-    pub int_number: u64,
+    pub radix: Radix,
     pub loc: Loc,
 }
 
@@ -372,12 +348,18 @@ pub unsafe fn loc(l: *mut Lexer) -> Loc {
     }
 }
 
+#[must_use]
 pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<()> {
-    let escape_char = if !(*l).historical { '\\' } else {'*'} as c_char;
+    let escape_chars: &[c_char] = if !(*l).historical {
+        &['\\' as c_char, '*' as c_char]
+    } else {
+        &['*' as c_char]
+    };
 
     while let Some(x) = peek_char(l) {
         match x {
-            x if x == escape_char => {
+            x if escape_chars.contains(&x) => {
+                let current_escape = x;
                 skip_char(l);
                 let Some(x) = peek_char(l) else {
                     (*l).token = Token::ParseError;
@@ -390,7 +372,7 @@ pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<
                     x if x == 't'   as c_char => '\t' as c_char,
                     x if x == 'r'   as c_char => '\r' as c_char,
                     x if x == delim           => delim,
-                    x if x == escape_char     => escape_char,
+                    x if x == current_escape => current_escape,
                     x => {
                         (*l).token = Token::ParseError;
                         diagf!(loc(l), c!("LEXER ERROR: Unknown escape sequence starting with `%c`\n"), x as c_int);
@@ -408,14 +390,6 @@ pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<
         }
     }
     Some(())
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy)]
-enum Radix {
-    Oct = 8,
-    Dec = 10,
-    Hex = 16,
 }
 
 unsafe fn parse_digit(c: c_char, radix: Radix) -> Option<u8> {
@@ -439,32 +413,18 @@ unsafe fn parse_digit(c: c_char, radix: Radix) -> Option<u8> {
     return None;
 }
 
-unsafe fn parse_number(l: *mut Lexer, radix: Radix, report_point: Parse_Point) -> Option<()> {
+#[must_use]
+unsafe fn parse_number(l: *mut Lexer, radix: Radix) -> Option<()> {
     while let Some(x) = peek_char(l) {
-        let Some(d) = parse_digit(x, radix) else {
+        let Some(_) = parse_digit(x, radix) else {
             break;
         };
-
-        diagf!(loc(l), c!("LEXER INFO: DIGIT: %lu\n"), d as c_uint);
-        diagf!(loc(l), c!("LEXER INFO: int_number BEFORE MUL = %lu\n"), (*l).int_number);
-        let Some(r) = (*l).int_number.checked_mul(radix as u64) else {
-            (*l).parse_point = report_point;
-            diagf!(loc(l), c!("LEXER ERROR: Constant integer overflow\n"));
-            return None;
-        };
-        (*l).int_number = r;
-        diagf!(loc(l), c!("LEXER INFO: int_number AFTER MUL = %lu\n"), (*l).int_number);
-
-        diagf!(loc(l), c!("LEXER INFO: int_number BEFORE ADD = %lu\n"), (*l).int_number);
-        let Some(r) = (*l).int_number.checked_add(d as u64) else {
-            (*l).parse_point = report_point;
-            diagf!(loc(l), c!("LEXER ERROR: Constant integer overflow.\n"));
-            return None;
-        };
-        (*l).int_number = r;
-        diagf!(loc(l), c!("LEXER INFO: int_number AFTER ADD = %lu\n"), (*l).int_number);
+        da_append(&mut (*l).string_storage, x);
         skip_char(l);
     };
+    da_append(&mut (*l).string_storage, 0);
+    (*l).radix = radix;
+    (*l).string = (*l).string_storage.items;
 
     return Some(());
 }
@@ -499,8 +459,26 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
         (*l).token = Token::EOF;
         return Some(())
     };
-    let puncs = if !(*l).historical { PUNCTS } else { HISTORICAL_PUNCTS };
 
+    let mut puncs = HISTORICAL_PUNCTS;
+    for i in 0..puncs.len() {
+        let (prefix, token) = (*puncs)[i];
+        if skip_prefix(l, prefix) {
+            (*l).token = token;
+            return Some(())
+        }
+    }
+    if !(*l).historical { 
+        puncs = MODERN_PUNCTS;
+        for i in 0..puncs.len() {
+            let (prefix, token) = (*puncs)[i];
+            if skip_prefix(l, prefix) {
+                (*l).token = token;
+                return Some(())
+            }
+        }
+    }
+    puncs = COMMON_PUNCTS;
     for i in 0..puncs.len() {
         let (prefix, token) = (*puncs)[i];
         if skip_prefix(l, prefix) {
@@ -544,20 +522,20 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
         }
 
         (*l).token = Token::IntLit;
-        (*l).int_number = 0;
-        return parse_number(l, Radix::Hex, start_of_number);
+        (*l).string_storage.count = 0;
+        return parse_number(l, Radix::Hex);
     }
 
     if skip_prefix(l, c!("0")) {
         (*l).token = Token::IntLit;
-        (*l).int_number = 0;
-        return parse_number(l, Radix::Oct, start_of_number);
+        (*l).string_storage.count = 0;
+        return parse_number(l, Radix::Oct);
     }
 
     if isdigit(x as c_int) != 0 {
         (*l).token = Token::IntLit;
-        (*l).int_number = 0;
-        return parse_number(l, Radix::Dec, start_of_number);
+        (*l).string_storage.count = 0;
+        return parse_number(l, Radix::Dec);
     }
 
     if x == '"' as c_char {
@@ -594,18 +572,9 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
             (*l).token = Token::ParseError;
             return None;
         }
-        if (*l).string_storage.count > 2 {
-            // TODO: maybe we should allow more on targets with 64 bits?
-            // TODO: such error should not terminate the compilation
-            diagf!((*l).loc, c!("LEXER ERROR: Character literal contains more than two characters\n"));
-            (*l).token = Token::ParseError;
-            return None;
-        }
-        (*l).int_number = 0;
-        for i in 0..(*l).string_storage.count {
-            (*l).int_number *= 0x100;
-            (*l).int_number += *(*l).string_storage.items.add(i) as u64;
-        }
+        da_append(&mut (*l).string_storage, 0);
+        (*l).string = (*l).string_storage.items;
+        
         return Some(());
     }
 

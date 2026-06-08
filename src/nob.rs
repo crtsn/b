@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use core::ffi::*;
 use core::slice;
 use crate::crust::*;
@@ -179,6 +181,7 @@ pub unsafe fn get_file_type(path: *const c_char) -> Option<File_Type> {
     Some((*FILE_TYPE_ORDER)[result as usize])
 }
 
+#[must_use]
 pub unsafe fn write_entire_file(path: *const c_char, data: *const c_void, size: usize) -> Option<()> {
     extern "C" {
         #[link_name = "nob_write_entire_file"]
@@ -191,6 +194,7 @@ pub unsafe fn write_entire_file(path: *const c_char, data: *const c_void, size: 
     }
 }
 
+#[must_use]
 pub unsafe fn read_entire_file(path: *const c_char, sb: *mut String_Builder) -> Option<()> {
     extern "C" {
         #[link_name = "nob_read_entire_file"]

@@ -2,6 +2,15 @@ use core::ffi::*;
 use crate::lexer::*;
 use crate::nob::*;
 
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Radix {
+    Invalid = 0,
+    Oct = 8,
+    Dec = 10,
+    Hex = 16,
+}
+
 #[derive(Clone, Copy)]
 pub enum Arg {
     /// Bogus value of an Arg.
@@ -22,7 +31,8 @@ pub enum Arg {
     RefAutoVar(usize),
     RefExternal(*const c_char),
     External(*const c_char),
-    Literal(u64),
+    CharLiteral(*const c_char),
+    IntLiteral(*const c_char, Radix),
     DataOffset(usize),
 }
 
@@ -107,6 +117,7 @@ pub struct Global {
     pub name: *const c_char,
     pub name_loc: Loc,
     pub values: Array<ImmediateValue>,
+    pub value_locs: Array<Loc>,
     pub is_vec: bool,
     pub minimum_size: usize,
 }
@@ -114,7 +125,9 @@ pub struct Global {
 #[derive(Clone, Copy)]
 pub enum ImmediateValue {
     Name(*const c_char),
-    Literal(u64),
+    IntLiteral(*const c_char, Radix),
+    CharLiteral(*const c_char),
+    NegatedIntLiteral(*const c_char, Radix),
     DataOffset(usize),
 }
 
@@ -154,7 +167,8 @@ pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
         Arg::Deref(index)       => sb_appendf(output, c!("deref[%zu]"), index),
         Arg::RefAutoVar(index)  => sb_appendf(output, c!("ref auto[%zu]"), index),
         Arg::RefExternal(name)  => sb_appendf(output, c!("ref %s"), name),
-        Arg::Literal(value)     => sb_appendf(output, c!("%lld"), value),
+        Arg::IntLiteral(value, radix)     => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
+        Arg::CharLiteral(value)     => sb_appendf(output, c!("'%s'"), value),
         Arg::AutoVar(index)     => sb_appendf(output, c!("auto[%zu]"), index),
         Arg::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
         Arg::Bogus              => unreachable!("bogus-amogus")
@@ -296,7 +310,9 @@ pub unsafe fn dump_globals(output: *mut String_Builder, globals: *const [Global]
                 sb_appendf(output, c!(", "));
             }
             match *global.values.items.add(j) {
-                ImmediateValue::Literal(lit) => sb_appendf(output, c!("%zu"), lit),
+                ImmediateValue::IntLiteral(value, radix) => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
+                ImmediateValue::NegatedIntLiteral(value, radix) => sb_appendf(output, c!("-%s/base%d"), value, radix as u64),
+                ImmediateValue::CharLiteral(value) => sb_appendf(output, c!("'%s'"), value),
                 ImmediateValue::Name(name) => sb_appendf(output, c!("%s"), name),
                 ImmediateValue::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
             };

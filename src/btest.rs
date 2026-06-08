@@ -20,6 +20,8 @@ pub mod lexer;
 pub mod codegen;
 pub mod shlex;
 pub mod params;
+pub mod codegen_common;
+pub mod errors;
 
 use core::ffi::*;
 use core::cmp;
@@ -700,6 +702,7 @@ impl Action {
     }
 }
 
+#[must_use]
 pub unsafe fn main(argc: i32, argv: *mut*mut c_char) -> Option<()> {
     let all_targets = codegen::load_targets()?;
 
