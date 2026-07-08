@@ -80,7 +80,7 @@ endif
 $(BUILD)/bgen: $(SRC)/bgen.rs $(RSS) $(POSIX_OBJS) | $(BUILD)
 	rustc $(CRUST_FLAGS) -C link-args="$(POSIX_OBJS) $(LDFLAGS)" $(SRC)/bgen.rs -o $(BUILD)/bgen
 
-$(BUILD)/%.posix.o: ./thirdparty/%.c | $(BUILD)
+$(BUILD)/%.posix.o: ./thirdparty/%.c ./thirdparty/%.h | $(BUILD)
 	$(CC) -fPIC -g -c $< -o $@ $(LDFLAGS)
 
 # Cross-compilation on POSIX to Windows using mingw32-w64
@@ -94,7 +94,7 @@ $(BUILD)/btest.exe: $(SRC)/btest.rs $(RSS) $(MINGW32_OBJS) $(SRC)/codegen/.INDEX
 $(BUILD)/bgen.exe: $(SRC)/bgen.rs $(RSS) $(MINGW32_OBJS) | $(BUILD)
 	rustc $(CRUST_FLAGS) --target x86_64-pc-windows-gnu -C link-args="$(MINGW32_OBJS) -lmingwex -lmsvcrt -lkernel32" $(SRC)/bgen.rs -o $(BUILD)/bgen.exe
 
-$(BUILD)/%.mingw32.o: ./thirdparty/%.c | $(BUILD)
+$(BUILD)/%.mingw32.o: ./thirdparty/%.c ./thirdparty/%.h | $(BUILD)
 	x86_64-w64-mingw32-gcc -fPIC -g -c $< -o $@
 
 $(BUILD):

@@ -115,6 +115,7 @@ pub mod libc {
         pub fn toupper(c: c_int) -> c_int;
         pub fn qsort(base: *mut c_void, nmemb: usize, size: usize, compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int);
         pub fn dirname(path: *const c_char) -> *const c_char;
+        pub fn realpath(path: *const c_char, resolved_path: *mut c_char) -> *const c_char;
     }
 
     // count is the amount of items, not bytes

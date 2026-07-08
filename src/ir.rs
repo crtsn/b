@@ -146,6 +146,7 @@ pub struct Program {
     pub variadics: Array<(*const c_char, Variadic)>,
     pub globals: Array<Global>,
     pub asm_funcs: Array<AsmFunc>,
+    pub error_count: *mut usize, 
 }
 
 pub unsafe fn dump_arg_call(arg: Arg, output: *mut String_Builder) {

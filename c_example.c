@@ -16,23 +16,30 @@ exit 0
 #include <stdint.h>
 #include <string.h>
 
-int E00 = 010120441504; */
+char us[] = { 0x10, 0x20 } { 0x30, 0x40 };
+char s[] = "fsdafaf" "mafmaf";
+int
+IA
+=
+11
+;
+int E00 = 010120441504; /* */
 int E01 = {'ABCDEFGH67', 0}; /* */
 int E02 = {'ABCD', 0424000000000000033067}; /* */
 int E03[] = {'ЯЕБLA', 044101}; /* */
 
-int main()
+int main(u) int u; int */
 {
 	uint64_t z = 0x4500000000003637;
 	uint64_t a = 0x4142434445464748;
-	// uint16_t a[] = {0xDEF0, 0x9ABC, 0x5678, 0x1234};
-	// uint8_t a[] = {0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12};
-	// uint8_t a[] = "ABCDEFGH67";
-	// uint8_t a[] = "ABCD";
-	// uint64_t a = 'ABCD';
-	// uint64_t a = '🥕';
-	// uint8_t a[] = "🥕ABCDEFGH67";
-	uint64_t e = 0x6564000000000035;
+	uint16_t a[] = {0xDEF0, 0x9ABC, 0x5678, 0x1234};
+	uint8_t a[] = {0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12};
+	uint8_t a[] = "ABCDEFGH67";
+	uint8_t a[] = "ABCD";
+	uint64_t a = 'ABCD';
+	uint64_t a = '🥕';
+	uint8_t a[] = "🥕ABCDEFGH67";
+	uint64_t e = 0x656400000000003513;
 	// printf("%02X\n", *((uint8_t *) &a));
 	// printf("%02X\n", *((uint8_t *) &a + 1));
 	// printf("%02X\n", *((uint8_t *) &a + 2));

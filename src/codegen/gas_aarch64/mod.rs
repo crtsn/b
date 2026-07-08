@@ -565,8 +565,8 @@ pub unsafe fn get_apis(targets: *mut Array<TargetAPI>) {
         name: c!("gas-aarch64-linux"),
         file_ext: c!(""),
         new,
-        build: |gen, program, program_path, garbage_base, nostdlib, debug, error_count| {
-            generate_program(gen, program, program_path, garbage_base, Os::Linux, nostdlib, debug, error_count)
+        build: |gen, program, program_path, garbage_base, nostdlib, debug| {
+            generate_program(gen, program, program_path, garbage_base, Os::Linux, nostdlib, debug)
         },
         run: |gen, program_path, run_args| {
             run_program(gen, program_path, run_args, Os::Linux)
@@ -577,8 +577,8 @@ pub unsafe fn get_apis(targets: *mut Array<TargetAPI>) {
         name: c!("gas-aarch64-darwin"),
         file_ext: c!(""),
         new,
-        build: |gen, program, program_path, garbage_base, nostdlib, debug, error_count| {
-            generate_program(gen, program, program_path, garbage_base, Os::Darwin, nostdlib, debug, error_count)
+        build: |gen, program, program_path, garbage_base, nostdlib, debug| {
+            generate_program(gen, program, program_path, garbage_base, Os::Darwin, nostdlib, debug)
         },
         run: |gen, program_path, run_args| {
             run_program(gen, program_path, run_args, Os::Darwin)
@@ -620,7 +620,7 @@ pub unsafe fn new(a: *mut arena::Arena, args: *const [*const c_char]) -> Option<
 
 pub unsafe fn generate_program(
     gen: *mut c_void, program: *const Program, program_path: *const c_char, garbage_base: *const c_char, os: Os,
-    nostdlib: bool, debug: bool, error_count: *mut usize,
+    nostdlib: bool, debug: bool,
 ) -> Option<()> {
     let gen = gen as *mut Gas_AArch64;
     let output = &mut (*gen).output;

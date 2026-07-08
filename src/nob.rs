@@ -169,6 +169,8 @@ extern "C" {
     pub fn copy_file(src_path: *const c_char, dst_path: *const c_char) -> bool;
     #[link_name = "nob_delete_file"]
     pub fn delete_file(path: *const c_char) -> bool;
+    #[link_name = "nob_temp_running_executable_path"]
+    pub fn temp_running_executable_path() -> *const c_char;
 }
 
 pub unsafe fn get_file_type(path: *const c_char) -> Option<File_Type> {

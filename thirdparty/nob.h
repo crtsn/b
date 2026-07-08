@@ -512,6 +512,7 @@ int nob_needs_rebuild1(const char *output_path, const char *input_path);
 int nob_file_exists(const char *file_path);
 const char *nob_get_current_dir_temp(void);
 bool nob_set_current_dir(const char *path);
+char *nob_temp_running_executable_path(void);
 
 // TODO: we should probably document somewhere all the compiler we support
 
@@ -1862,6 +1863,53 @@ bool nob_set_current_dir(const char *path)
 #endif // _WIN32
 }
 
+// From nob - v3.9.0
+char *nob_temp_strndup(const char *s, size_t n)
+{
+    char *r = (char*)nob_temp_alloc(n + 1);
+    NOB_ASSERT(r != NULL && "Extend the size of the temporary allocator");
+    memcpy(r, s, n);
+    r[n] = '\0';
+    return r;
+}
+
+// From nob - v3.9.0
+char *nob_temp_running_executable_path(void)
+{
+#if defined(__linux__)
+    char buf[4096];
+    int length = readlink("/proc/self/exe", buf, NOB_ARRAY_LEN(buf));
+    if (length < 0) return nob_temp_strdup("");
+    return nob_temp_strndup(buf, length);
+#elif defined(_WIN32)
+    char buf[MAX_PATH];
+    int length = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    return nob_temp_strndup(buf, length);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = NOB_ARRAY_LEN(buf);
+    if (_NSGetExecutablePath(buf, &size) != 0) return nob_temp_strdup("");
+    int length = strlen(buf);
+    return nob_temp_strndup(buf, length);
+#elif defined(__FreeBSD__)
+    char buf[4096];
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+    size_t length = sizeof(buf);
+    if (sysctl(mib, 4, buf, &length, NULL, 0) < 0) return nob_temp_strdup("");
+    return nob_temp_strndup(buf, length);
+#elif defined(__HAIKU__)
+    int cookie = 0;
+    image_info info;
+    while (get_next_image_info(B_CURRENT_TEAM, &cookie, &info) == B_OK)
+        if (info.type == B_APP_IMAGE)
+            break;
+    return nob_temp_strndup(info.name, strlen(info.name));
+#else
+    fprintf(stderr, "%s:%d: TODO: nob_temp_running_executable_path is not implemented for this platform\n", __FILE__, __LINE__);
+    return nob_temp_strdup("");
+#endif
+}
+
 // minirent.h SOURCE BEGIN ////////////////////////////////////////
 #ifdef _WIN32
 struct DIR
@@ -2045,6 +2093,7 @@ int closedir(DIR *dirp)
         #define file_exists nob_file_exists
         #define get_current_dir_temp nob_get_current_dir_temp
         #define set_current_dir nob_set_current_dir
+        #define temp_running_executable_path nob_temp_running_executable_path
         #define String_View Nob_String_View
         #define temp_sv_to_cstr nob_temp_sv_to_cstr
         #define sv_chop_by_delim nob_sv_chop_by_delim

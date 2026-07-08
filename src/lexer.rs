@@ -1,8 +1,10 @@
 use core::ffi::*;
+use core::ptr;
 use core::mem::zeroed;
 use crate::nob::*;
 use crate::crust::libc::*;
 use crate::ir::{Radix};
+use crate::errors::bump_error_count;
 
 #[derive(Clone, Copy)]
 pub struct Loc {
@@ -262,9 +264,10 @@ pub struct Lexer {
     pub string: *const c_char,
     pub radix: Radix,
     pub loc: Loc,
+    pub error_count: *mut usize, 
 }
 
-pub unsafe fn new(input_path: *const c_char, input_stream: *const c_char, eof: *const c_char, historical: bool) -> Lexer {
+pub unsafe fn new(input_path: *const c_char, input_stream: *const c_char, eof: *const c_char, historical: bool, error_count: *mut usize) -> Lexer {
     let mut l: Lexer = zeroed();
     l.input_path              = input_path;
     l.input_stream            = input_stream;
@@ -272,7 +275,8 @@ pub unsafe fn new(input_path: *const c_char, input_stream: *const c_char, eof: *
     l.parse_point.current     = input_stream;
     l.parse_point.line_start  = input_stream;
     l.parse_point.line_number = 1;
-    l.historical = historical;
+    l.historical              = historical;
+    l.error_count             = error_count;
     l
 }
 
@@ -307,6 +311,44 @@ pub unsafe fn skip_whitespaces(l: *mut Lexer) {
             break
         }
     }
+}
+
+#[must_use]
+pub unsafe fn skip_whitespaces_and_comments(l: *mut Lexer) -> Option<()> {
+    'comments: loop {
+        skip_whitespaces(l);
+
+        let saved_point = (*l).parse_point;
+
+        if skip_prefix(l, c!("//")) {
+            skip_until(l, c!("\n"));
+            if (*l).historical {
+                let end_point = (*l).parse_point;
+                (*l).parse_point = saved_point;
+                diagf!(loc(l), c!("LEXER ERROR: C++ style comments are not available in the historical mode.\n"));
+                (*l).parse_point = end_point;
+                bump_error_count((*l).error_count)?;
+            }
+            continue 'comments;
+        }
+
+        let begin_loc = loc(l);
+        if skip_prefix(l, c!("/*")) {
+            while !skip_prefix(l, c!("*/")) {
+                if is_eof(l) {
+                    diagf!(loc(l), c!("LEXER ERROR: Unfinished comment\n"));
+                    diagf!(begin_loc, c!("LEXER INFO: Comment starts here\n"));
+                    (*l).token = Token::ParseError;
+                    return None;
+                }
+                skip_char(l);
+            }
+            continue 'comments;
+        }
+
+        break 'comments;
+    }
+    Some(())
 }
 
 pub unsafe fn skip_prefix(l: *mut Lexer, mut prefix: *const c_char) -> bool {
@@ -355,7 +397,7 @@ pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<
     } else {
         &['*' as c_char]
     };
-
+    
     while let Some(x) = peek_char(l) {
         match x {
             x if escape_chars.contains(&x) => {
@@ -374,9 +416,10 @@ pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<
                     x if x == delim           => delim,
                     x if x == current_escape => current_escape,
                     x => {
-                        (*l).token = Token::ParseError;
                         diagf!(loc(l), c!("LEXER ERROR: Unknown escape sequence starting with `%c`\n"), x as c_int);
-                        return None;
+                        skip_char(l);
+                        bump_error_count((*l).error_count)?;
+                        continue;
                     }
                 };
                 da_append(&mut (*l).string_storage, x);
@@ -429,29 +472,10 @@ unsafe fn parse_number(l: *mut Lexer, radix: Radix) -> Option<()> {
     return Some(());
 }
 
+#[must_use]
 pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
-    'comments: loop {
-        skip_whitespaces(l);
-
-        let saved_point = (*l).parse_point;
-        if skip_prefix(l, c!("//")) {
-            if (*l).historical {
-                (*l).parse_point = saved_point;
-                diagf!(loc(l), c!("LEXER ERROR: C++ style comments are not available in the historical mode.\n"));
-                (*l).token = Token::ParseError;
-                return None;
-            }
-            skip_until(l, c!("\n"));
-            continue 'comments;
-        }
-
-        if skip_prefix(l, c!("/*")) {
-            skip_until(l, c!("*/"));
-            continue 'comments;
-        }
-
-        break 'comments;
-    }
+    (*l).string = ptr::null();
+    skip_whitespaces_and_comments(l)?;
 
     (*l).loc = loc(l);
 
@@ -514,16 +538,17 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
 
     let start_of_number = (*l).parse_point;
     if skip_prefix(l, c!("0x")) {
+        let value = parse_number(l, Radix::Hex);
         if (*l).historical {
+            let end_point = (*l).parse_point;
             (*l).parse_point = start_of_number;
             diagf!(loc(l), c!("LEXER ERROR: hex literals are not available in the historical mode.\n"));
-            (*l).token = Token::ParseError;
-            return None;
+            (*l).parse_point = end_point;
+            bump_error_count((*l).error_count)?;
         }
-
         (*l).token = Token::IntLit;
         (*l).string_storage.count = 0;
-        return parse_number(l, Radix::Hex);
+        return value;
     }
 
     if skip_prefix(l, c!("0")) {
@@ -569,8 +594,7 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
         skip_char(l);
         if (*l).string_storage.count == 0 {
             diagf!((*l).loc, c!("LEXER ERROR: Empty character literal\n"));
-            (*l).token = Token::ParseError;
-            return None;
+            bump_error_count((*l).error_count)?;
         }
         da_append(&mut (*l).string_storage, 0);
         (*l).string = (*l).string_storage.items;
@@ -578,7 +602,22 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
         return Some(());
     }
 
-    diagf!((*l).loc, c!("LEXER ERROR: Unknown token %c\n"), *(*l).parse_point.current as c_int);
+    diagf!((*l).loc, c!("LEXER ERROR: Unknown token '%c'\n"), *(*l).parse_point.current as c_int);
+    skip_char(l);
     (*l).token = Token::ParseError;
+    bump_error_count((*l).error_count)?;
     None
 }
+
+#[must_use]
+pub unsafe fn get_next_valid_token(l: *mut Lexer) -> Option<()> {
+    loop {
+        if let Some(()) = get_token(l) {
+            if (*l).token == Token::EOF {
+                return None;
+            }
+            return Some(());
+        }
+    }
+}
+

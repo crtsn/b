@@ -142,10 +142,6 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) {
 
     c = char(str, i);
     while (c != 0) {
-        if (c == '*n') {
-            putchar(015); /* \r */
-        }
-
         if(c == '%') {
             i =+ 1;
             c = char(str, i);
@@ -160,6 +156,8 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) {
                 printn(*arg, 16, 0);
             } else if (c == 'o') {
                 printn(*arg, 8, 0);
+            } else if (c == 'x') {
+                printn(*arg, 16, 0);
             } else if (c == 'c') {
                 putchar(*arg);
             } else if (c == 's') { /* clobbers `c`, the last one */

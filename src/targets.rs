@@ -39,10 +39,9 @@ impl Target {
         garbage_base: *const c_char,
         nostdlib: bool,
         debug: bool,
-        error_count: *mut usize, 
     ) -> Option<()> {
         match self.api {
-            TargetAPI::V1 { build, .. } => build(gen, program, program_path, garbage_base, nostdlib, debug, error_count),
+            TargetAPI::V1 { build, .. } => build(gen, program, program_path, garbage_base, nostdlib, debug),
         }
     }
     pub unsafe fn run (
@@ -98,7 +97,6 @@ pub enum TargetAPI {
             garbage_base: *const c_char,
             nostdlib: bool,
             debug: bool,
-            error_count: *mut usize, 
         ) -> Option<()>,
         run: unsafe fn(
             gen: *mut c_void,
