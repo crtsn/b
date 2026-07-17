@@ -1458,6 +1458,8 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
     let mut c: Compiler = zeroed();
     c.historical = *historical;
     let executable_directory = dirname(temp_running_executable_path());
+
+    fprintf(stderr(), c!("target: %s\n"), target.codegen_name);
     fprintf(stderr(), c!("executable_directory: %s\n"), executable_directory);
 
     if (*linker).count > 0 {

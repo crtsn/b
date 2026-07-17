@@ -469,7 +469,11 @@ unsafe fn parse_number(l: *mut Lexer, radix: Radix) -> Option<()> {
     (*l).radix = radix;
     (*l).string = (*l).string_storage.items;
 
-    return Some(());
+    if strlen((*l).string) == 0 {
+        None
+    } else {
+        Some(())
+    }
 }
 
 #[must_use]
@@ -554,7 +558,11 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
     if skip_prefix(l, c!("0")) {
         (*l).token = Token::IntLit;
         (*l).string_storage.count = 0;
-        return parse_number(l, Radix::Oct);
+        if let Some(_) = parse_number(l, Radix::Oct) {
+            return Some(());
+        } else {
+            (*l).parse_point = start_of_number;
+        }
     }
 
     if isdigit(x as c_int) != 0 {
