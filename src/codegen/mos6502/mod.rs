@@ -885,6 +885,7 @@ pub unsafe fn generate_function(name: *const c_char, loc: Loc, params_count: usi
         da_append(&mut (*asm).addresses, 0);
     }
 
+    fprintf(stderr(), c!("FUNC: %s: auto_vars_count: %d\n"), name, auto_vars_count);
     // TODO: use params_count, auto_vars_count
     assert!(auto_vars_count*2 < 256);
     let stack_size = (auto_vars_count * 2) as u8;

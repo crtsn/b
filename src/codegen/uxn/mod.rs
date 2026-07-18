@@ -819,6 +819,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
         },
         Arg::DataOffset(offset) => {
             write_op(output, UxnOp::LIT2);
+            
             write_label_abs(output, (*assembler).data_section_label, assembler, 0);
             write_lit2(output, offset as u16);
             write_op(output, UxnOp::ADD2);

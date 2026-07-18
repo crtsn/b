@@ -7,6 +7,7 @@ export RUST_BACKTRACE=1
 
 grep -q "^a.log$" .git/info/exclude || echo "a.log" >>.git/info/exclude || true
 grep -q "^b.log$" .git/info/exclude || echo "b.log" >>.git/info/exclude || true
+grep -q "^ir.log$" .git/info/exclude || echo "ir.log" >>.git/info/exclude || true
 grep -q "^b_example$" .git/info/exclude || echo "b_example" >>.git/info/exclude || true
 grep -q "^b_example.rom$" .git/info/exclude || echo "b_example.rom" >>.git/info/exclude || true
 grep -q "^b_example.6502$" .git/info/exclude || echo "b_example.6502" >>.git/info/exclude || true
@@ -15,15 +16,28 @@ SCRIPT_DIR=$( dirname -- "$( readlink -f -- "$0"; )"; )
 cd $SCRIPT_DIR
 export PATH="$PWD/build:$PWD/../posix6502/build:$PWD/../uxncli/bin:$PATH" 
 statuses=()
-# b -q -hist $0 -t gas-x86_64-linux -o "b_example" || statuses[0]=$?
+b -hist $0 -q -t 6502-posix -ir >ir.log
 b -hist $0 -q -t 6502-posix || statuses[1]=$?
+if [ -z ${statuses[1]} ]; then 
+	echo "b_example.6502:"
+	xxd b_example.6502
+fi;
 b -hist $0 -q -t uxn || statuses[2]=$?
+if [ -z ${statuses[1]} ]; then 
+	echo "b_example.rom:"
+	xxd b_example.rom
+fi;
+# exit 0
+
+# b -q -hist $0 -t gas-x86_64-linux -o "b_example" || statuses[0]=$?
+# b -hist $0 -q -t 6502-posix || statuses[1]=$?
+# b -hist $0 -q -t uxn || statuses[2]=$?
 for status in "${statuses[@]}"; do
 	(exit $status)
 done
-# b -nobuild -run -hist $0 -q -t gas-x86_64-linux -o "b_example"
-b -nobuild -run -hist $0 -q -t 6502-posix >a.log 2>&1
-b -nobuild -run -hist $0 -q -t uxn -C "runner=uxncli" >b.log 2>&1
+# b -nobuild -run -hist $0 -q -t gas-x86_64-linux -o "b_example" || true
+b -nobuild -run -hist $0 -q -t 6502-posix >a.log 2>&1 || true
+b -nobuild -run -hist $0 -q -t uxn -C "runner=uxncli" >b.log 2>&1 || true
 exit 0
 */
 
@@ -33,103 +47,63 @@ C 041101, 042103, 043105;                                             /* */
 D 040502, 041504, 042506;                                             /* */
 W;                                                                    /* */
 
+print_addr_deref(label, addr)
+{
+	printf("%s: %p*n", label, addr);		              /* */
+	printf("%s for mos: %p*n", label, addr - 0100000);		              /* */
+	printf("%s for uxn: %p*n", label, addr - 0400);		              /* */
+	printf("%s: 0x%x: '%c'*n", label, *addr, *addr);		              /* */
+	printf("%s: hi: 0x%x*n", label, char(addr, 0));		              /* */
+	printf("%s: lo: 0x%x*n", label, char(addr, 1));		              /* */
+	printf("*n");		              /* */
+}
+
+print_three_derefs(label, addr)
+{
+	auto i;
+	auto cur;
+	auto temp_label 8;
+	i = 0;
+	cur = char(label, i);
+	printf("cur: 0x%x*n", cur);
+	while(cur != '*0')
+	{
+		lchar(temp_label, i, cur);
+        i++;
+        cur = char(label, i);
+		printf("cur: 0x%x*n", cur);
+	}
+	lchar(temp_label, i, cur);
+	printf("temp_lavel: *"%s*"*n", temp_label);
+	print_addr_deref(temp_label, addr);
+	lchar(temp_label, i, ' ');
+	lchar(temp_label, i + 1, '+');
+	lchar(temp_label, i + 2, ' ');
+	lchar(temp_label, i + 3, '1');
+	lchar(temp_label, i + 4, '*0');
+	print_addr_deref(temp_label, addr + 1);
+	lchar(temp_label, i + 3, 'W');
+	print_addr_deref(temp_label, addr + W);
+	printf("---*n");                                                  /* */
+}
+
+
 main()
 {
     W = &0[1];                                                        /* */
+	/* auto a;
+	/* a = A + 2;
 	printf("W: %d*n", W);                       					  /* */
-	printf("is LE: %c*n", is_le() ? 'Y' : 'N');                       /* */
-	printf("is BE: %c*n", is_be() ? 'Y' : 'N');                       /* */
-	printf("---*n");                                                  /* */
-	printf("(A(%p) + W(%d)): %p*n", A, W, (A + W));		              /* */
-	printf("**((A + W) - 2): '%c'*n", *((A + W) - 2));              /* */
-	printf("**((A + W) - 1): '%c'*n", *((A + W) - 1));              /* */
-	printf("**((A + W) + 0): '%c'*n", *((A + W) + 0));              /* */
-	printf("**((A + W) + 1): '%c'*n", *((A + W) + 1));              /* */
-	printf("**((A + W) + 2): '%c'*n", *((A + W) + 2));              /* */
-	printf("---*n");                                                  /* */
-	printf("**(&A[1] - 2): '%c'*n", *(&A[1] - 2));              /* */
-	printf("**(&A[1] - 1): '%c'*n", *(&A[1] - 1));              /* */
-	printf("**(&A[1] + 0): '%c'*n", *(&A[1] + 0));              /* */
-	printf("**(&A[1] + 1): '%c'*n", *(&A[1] + 1));              /* */
-	printf("**(&A[1] + 2): '%c'*n", *(&A[1] + 2));              /* */
-	printf("---*n");                                                  /* */
-	/* printf("char(&A[1], -2): '%c'*n", char(&A[1], -2));               /* */
-	/* printf("char(&A[1], -1): '%c'*n", char(&A[1], -1));               /* */
-	/* printf("char(&A[1],  0): '%c'*n", char(&A[1],  0));               /* */
-	/* printf("char(&A[1],  1): '%c'*n", char(&A[1],  1));               /* */
-	/* printf("char(&A[1],  2): '%c'*n", char(&A[1],  2));               /* */
+	/* printf("is LE: %c*n", is_le() ? 'Y' : 'N');                       /* */
+	/* printf("is BE: %c*n", is_be() ? 'Y' : 'N');                       /* */
 	/* printf("---*n");                                                  /* */
-	/* printf("char((A + 2), -2): '%c'*n", char((A + 2), -2));           /* */
-	/* printf("char((A + 2), -1): '%c'*n", char((A + 2), -1));           /* */
-	/* printf("char((A + 2),  0): '%c'*n", char((A + 2), 0));            /* */
-	/* printf("char((A + 2),  1): '%c'*n", char((A + 2), 1));            /* */
-	/* printf("char((A + 2),  2): '%c'*n", char((A + 2), 2));            /* */
-	/* printf("---*n");                                                  /* */
-	/* printf("char(&(&B)[1], -2): '%c'*n",  char(&(&B)[1], -2));        /* */
-	/* printf("char(&(&B)[1], -1): '%c'*n",  char(&(&B)[1], -1));        /* */
-	/* printf("char(&(&B)[1],  0): '%c'*n",  char(&(&B)[1],  0));        /* */
-	/* printf("char(&(&B)[1],  1): '%c'*n",  char(&(&B)[1],  1));        /* */
-	/* printf("char(&(&B)[1],  2): '%c'*n",  char(&(&B)[1],  2));        /* */
-	/* printf("---*n");                                                  /* */
-	/* printf("char((&B + W + 2), -2): '%c'*n", char((&B + W + 2), -2)); /* */
-	/* printf("char((&B + W + 2), -1): '%c'*n", char((&B + W + 2), -1)); /* */
-	/* printf("char((&B + W + 2),  0): '%c'*n", char((&B + W + 2),  0)); /* */
-	/* printf("char((&B + W + 2),  1): '%c'*n", char((&B + W + 2),  1)); /* */
-	/* printf("char((&B + W + 2),  2): '%c'*n", char((&B + W + 2),  2)); /* */
-	/* printf("---*n");                                                  /* */
-	/* printf("char((&B + W), -2): '%c'*n", char((&B + W), -2));         /* */
-	/* printf("char((&B + W), -1): '%c'*n", char((&B + W), -1));         /* */
-	/* printf("char((&B + W),  0): '%c'*n", char((&B + W),  0));         /* */
-	/* printf("char((&B + W),  1): '%c'*n", char((&B + W),  1));         /* */
-	/* printf("char((&B + W),  2): '%c'*n", char((&B + W),  2));         /* */
-	/* printf("---*n");                                                  /* */
-	printf("(B(%p) + W(%d)): %p*n", B, W, (B + W));		              /* */
-	printf("**((&B + W) - 2): '%c'*n", *((&B + W) - 2));              /* */
-	printf("**((&B + W) - 1): '%c'*n", *((&B + W) - 1));              /* */
-	printf("**((&B + W) + 0): '%c'*n", *((&B + W) + 0));              /* */
-	printf("**((&B + W) + 1): '%c'*n", *((&B + W) + 1));              /* */
-	printf("**((&B + W) + 2): '%c'*n", *((&B + W) + 2));              /* */
-	printf("---*n");                                                  /* */
-	/* printf("char(&(&B)[0], 0): '%c'*n", char(&(&B)[0], 0));           /* */
-	/* printf("char(&(&B)[0], 1): '%c'*n", char(&(&B)[0], 1));           /* */
-	/* printf("char(&(&B)[1], 0): '%c'*n", char(&(&B)[1], 0));           /* */
-	/* printf("char(&(&B)[1], 1): '%c'*n", char(&(&B)[1], 1));           /* */
-	/* printf("char(&(&B)[2], 0): '%c'*n", char(&(&B)[2], 0));           /* */
-	/* printf("char(&(&B)[2], 1): '%c'*n", char(&(&B)[2], 1));           /* */
-	/* printf("---*n");                                                  /* */
-	printf("(C(%p) + W(%d)): %p*n", C, W, (C + W));		              /* */
-	printf("**((&C + W) - 2): '%c'*n", *((&C + W) - 2));              /* */
-	printf("**((&C + W) - 1): '%c'*n", *((&C + W) - 1));              /* */
-	printf("**((&C + W) + 0): '%c'*n", *((&C + W) + 0));              /* */
-	printf("**((&C + W) + 1): '%c'*n", *((&C + W) + 1));              /* */
-	printf("**((&C + W) + 2): '%c'*n", *((&C + W) + 2));              /* */
-	printf("---*n");                                                  /* */
-	/* printf("char((&C + W), -2): '%c'*n", char((&C + W), -2));         /* */
-	/* printf("char((&C + W), -1): '%c'*n", char((&C + W), -1));         /* */
-	/* printf("char((&C + W),  0): '%c'*n", char((&C + W),  0));         /* */
-	/* printf("char((&C + W),  1): '%c'*n", char((&C + W),  1));         /* */
-	/* printf("char((&C + W),  2): '%c'*n", char((&C + W),  2));         /* */
-	/* printf("---*n");                                                  /* */
-	printf("(D(%p) + W(%d)): %p*n", D, W, (D + W));		              /* */
-	printf("**((&D + W) - 2): '%c'*n", *((&D + W) - 2));              /* */
-	printf("**((&D + W) - 1): '%c'*n", *((&D + W) - 1));              /* */
-	printf("**((&D + W) + 0): '%c'*n", *((&D + W) + 0));              /* */
-	printf("**((&D + W) + 1): '%c'*n", *((&D + W) + 1));              /* */
-	printf("**((&D + W) + 2): '%c'*n", *((&D + W) + 2));              /* */
-	printf("---*n");                                                  /* */
-	/* printf("char((&D + W), -2): '%c'*n", char((&D + W), -2));         /* */
-	/* printf("char((&D + W), -1): '%c'*n", char((&D + W), -1));         /* */
-	/* printf("char((&D + W),  0): '%c'*n", char((&D + W),  0));         /* */
-	/* printf("char((&D + W),  1): '%c'*n", char((&D + W),  1));         /* */
-	/* printf("char((&D + W),  2): '%c'*n", char((&D + W),  2));         /* */
-	/* printf("---*n");                                                  /* */
-	printf("0101 == 'A': %c*n", 0101 == 'A' ? 'Y' : 'N');             /* */
-	auto E;                                                           /* */
-	E = "ABC";                                                        /* */
-	printf("E[0]: 0x%x*n", E[0]);                                     /* */
-	printf("E[0] & 0377: 0x%x*n", E[0] & 0377);                       /* */
-	printf("E[0] == 'A': %c*n", E[0] == 'A' ? 'Y' : 'N');             /* */
-	printf("*n*n*n");                                                 /* */
+	/* printf("A: %p*n", A);		              /* */
+	/* printf("A for mos: %p*n", A - 0100000);		              /* */
+	/* printf("A for uxn: %p*n", A - 0400);		              /* */
+	print_three_derefs("A", A);                                         /* */
+	print_three_derefs("&B", &B);                                         /* */
+	print_three_derefs("&C", &C);                                         /* */
+	print_three_derefs("&D", &D);                                         /* */
 }
 
 is_le()
