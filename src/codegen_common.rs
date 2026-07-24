@@ -38,9 +38,8 @@ pub unsafe fn parse_int_literal_to_u64(value: *const c_char, radix: Radix) -> Op
 }
 
 #[must_use]
-pub unsafe fn parse_char_literal_to_u64_le(char_literal: *const c_char) -> Option<u64> {
+pub unsafe fn parse_char_literal_to_u64_le(char_literal: *const c_char, count: usize) -> Option<u64> {
   let word_bytes = 8;
-  let count = strlen(char_literal);
 
   let mut result: u64 = 0;
   for i in 0..count {
@@ -83,10 +82,10 @@ pub unsafe fn parse_int_literal_to_u16(value: *const c_char, radix: Radix) -> Re
 }
 
 #[must_use]
-pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char) -> Result<u16, ()> {
+pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
     let word_bytes = 2;
-    let count = strlen(char_literal);
 
+    fprintf(stderr(), c!("parse_char_literal_to_u16_be: \"%s\", %u\n"), char_literal, count as c_uint);
     let mut result: u16 = 0;
     for i in 0..count {
         if count > word_bytes {
@@ -94,8 +93,7 @@ pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char) -> Resul
         }
 
         let shift_amount = (count - 1 - i) * 8;
-        let bytes = CStr::from_ptr(char_literal).to_bytes();
-        let char_byte = bytes[i];
+        let char_byte = *char_literal.add(i);
         let shifted_char = (char_byte as u16) << shift_amount;
 
         let Some(r) = result.checked_add(shifted_char) else {
@@ -103,13 +101,15 @@ pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char) -> Resul
         };
         result = r;
     }
+    fprintf(stderr(), c!("parse_char_literal_to_u16_be: 0x%X\n"), result as c_uint);
     Ok(result)
 }
 
 #[must_use]
-pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char) -> Result<u16, ()> {
+pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
   let word_bytes = 2;
-  let count = strlen(char_literal);
+
+  fprintf(stderr(), c!("parse_char_literal_to_u16_le: \"%s\", %u\n"), char_literal, count as c_uint);
 
   let mut result: u16 = 0;
   for i in 0..count {
@@ -118,8 +118,7 @@ pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char) -> Resul
       }
 
       let shift_amount = i * 8;
-      let bytes = CStr::from_ptr(char_literal).to_bytes();
-      let char_byte = bytes[i];
+      let char_byte = *char_literal.add(i);
       let shifted_char = (char_byte as u16) << shift_amount;
 
       let Some(r) = result.checked_add(shifted_char) else {
@@ -127,6 +126,7 @@ pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char) -> Resul
       };
       result = r;
   }
+  fprintf(stderr(), c!("parse_char_literal_to_u16_le: 0x%X\n"), result as c_uint);
   Ok(result)
 }
 
@@ -152,8 +152,8 @@ pub unsafe fn parse_int_literal_to_u8(value: *const c_char, radix: Radix) -> Res
 }
 
 #[must_use]
-pub unsafe fn parse_char_literal_to_u8(char_literal: *const c_char) -> Result<u8, ()> {
-  if strlen(char_literal) > 1 {
+pub unsafe fn parse_char_literal_to_u8(char_literal: *const c_char, count: usize) -> Result<u8, ()> {
+  if count > 1 {
       return Err(());
   }
 

@@ -412,7 +412,7 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 Arg::External(name) =>  Some((Arg::RefExternal(name), false)),
                 Arg::AutoVar(index) =>  Some((Arg::RefAutoVar(index), false)),
                 Arg::Bogus          =>  Some((Arg::Bogus, false)), // Reference of a bogus value is a bogus value
-                Arg::IntLiteral(_, _) | Arg::CharLiteral(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
         Token::PlusPlus => {
@@ -440,8 +440,9 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
             Some((arg, false))
         }
         Token::CharLit => {
-            let value = arena::strdup(&mut (*c).arena, (*l).string);
-            Some((Arg::CharLiteral(value), false))
+            let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+            memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+            Some((Arg::CharLiteral(value as *const c_char, (*l).string_storage.count - 1), false))
         }
         Token::IntLit => {
             let value = arena::strdup(&mut (*c).arena, (*l).string);
@@ -541,7 +542,7 @@ pub unsafe fn compile_binop(lhs: Arg, rhs: Arg, binop: Binop, loc: Loc, c: *mut 
         Arg::Bogus => {
             // Bogus value does not compile to anything
         }
-        Arg::IntLiteral(_, _) | Arg::CharLiteral(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+        Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
     }
 }
 
@@ -609,7 +610,7 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
                 Arg::Bogus => {
                     // Bogus value does not compile to anything
                 }
-                Arg::IntLiteral(_, _) | Arg::CharLiteral(_) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
 
@@ -806,7 +807,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                         value
                     } else {
                         let value: u64;
-                        if let Some(v) = parse_char_literal_to_u64_le((*l).string) {
+                        if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
                             value = v;
                         } else {
                             diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
@@ -919,7 +920,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 value
             } else {
                 let value: u64;
-                if let Some(v) = parse_char_literal_to_u64_le((*l).string) {
+                if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
                     value = v;
                 } else {
                     diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
@@ -1237,8 +1238,9 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                                     ImmediateValue::NegatedIntLiteral(value, (*l).radix)
                                 }
                                 Token::CharLit => {
-                                    let value = arena::strdup(&mut (*c).arena, (*l).string);
-                                    ImmediateValue::CharLiteral(value)
+                                    let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+                                    memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+                                    ImmediateValue::CharLiteral(value as *const c_char, (*l).string_storage.count - 1)
                                 }
                                 Token::IntLit => {
                                     let value = arena::strdup(&mut (*c).arena, (*l).string);

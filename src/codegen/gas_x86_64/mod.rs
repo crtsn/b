@@ -66,9 +66,9 @@ pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char,output: *mut String_B
             }
             sb_appendf(output, c!("    movq $%lld, %%%s\n"), value, reg)
         }
-        Arg::CharLiteral(char_literal) => {
+        Arg::CharLiteral(char_literal, count) => {
             let value: u64;
-            if let Some(v) = parse_char_literal_to_u64_le(char_literal) {
+            if let Some(v) = parse_char_literal_to_u64_le(char_literal, count) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: x86_64: Character constant overflows platform word\n"));
@@ -438,9 +438,9 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                         }
                         sb_appendf(output, c!("0x%llX"), value)
                     }
-                    ImmediateValue::CharLiteral(char_literal) => {
+                    ImmediateValue::CharLiteral(char_literal, count) => {
                         let value: u64;
-                        if let Some(v) = parse_char_literal_to_u64_le(char_literal) {
+                        if let Some(v) = parse_char_literal_to_u64_le(char_literal, count) {
                             value = v;
                         } else {
                             diagf!(*global.value_locs.items.add(j), c!("ERROR: x86_64: Character constant overflows platform word\n"));

@@ -106,6 +106,7 @@ pub mod libc {
         pub fn printf(fmt: *const c_char, ...) -> c_int;
         pub fn fprintf(stream: *mut FILE, fmt: *const c_char, ...) -> c_int;
         pub fn memset(dest: *mut c_void, byte: c_int, size: usize) -> c_int;
+        pub fn memcpy(dest: *mut c_void, src: *const c_void, size: usize) -> *mut c_void;
         pub fn isspace(c: c_int) -> c_int;
         pub fn isalpha(c: c_int) -> c_int;
         pub fn isalnum(c: c_int) -> c_int;

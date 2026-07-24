@@ -1,4 +1,5 @@
 use core::ffi::*;
+use core::mem::zeroed;
 use crate::lexer::*;
 use crate::nob::*;
 
@@ -31,7 +32,7 @@ pub enum Arg {
     RefAutoVar(usize),
     RefExternal(*const c_char),
     External(*const c_char),
-    CharLiteral(*const c_char),
+    CharLiteral(*const c_char, usize),
     IntLiteral(*const c_char, Radix),
     DataOffset(usize),
 }
@@ -126,7 +127,7 @@ pub struct Global {
 pub enum ImmediateValue {
     Name(*const c_char),
     IntLiteral(*const c_char, Radix),
-    CharLiteral(*const c_char),
+    CharLiteral(*const c_char, usize),
     NegatedIntLiteral(*const c_char, Radix),
     DataOffset(usize),
 }
@@ -169,7 +170,24 @@ pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
         Arg::RefAutoVar(index)  => sb_appendf(output, c!("ref auto[%zu]"), index),
         Arg::RefExternal(name)  => sb_appendf(output, c!("ref %s"), name),
         Arg::IntLiteral(value, radix)     => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
-        Arg::CharLiteral(value)     => sb_appendf(output, c!("'%s'"), value),
+        Arg::CharLiteral(value, count)     => {
+            let mut raw_string: String_Builder = zeroed();
+            for i in 0..count {
+                let byte = *value.add(i);
+                match byte {
+                    v if v == '\0' as c_char => sb_appendf(&mut raw_string, c!("*0")),
+                    v if v == '\n' as c_char => sb_appendf(&mut raw_string, c!("*n")),
+                    v if v == '\t' as c_char => sb_appendf(&mut raw_string, c!("*t")),
+                    v if v == '\r' as c_char => sb_appendf(&mut raw_string, c!("*r")),
+                    v if v == '\'' as c_char => sb_appendf(&mut raw_string, c!("*'")),
+                    v if v == '*' as c_char => sb_appendf(&mut raw_string, c!("**")),
+                    v => sb_appendf(&mut raw_string, c!("%c"), v as c_int),
+                };
+            }
+            da_append(&mut raw_string, 0);
+            let res = sb_appendf(output, c!("'%s'"), raw_string.items);
+            res
+        }
         Arg::AutoVar(index)     => sb_appendf(output, c!("auto[%zu]"), index),
         Arg::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
         Arg::Bogus              => unreachable!("bogus-amogus")
@@ -313,7 +331,7 @@ pub unsafe fn dump_globals(output: *mut String_Builder, globals: *const [Global]
             match *global.values.items.add(j) {
                 ImmediateValue::IntLiteral(value, radix) => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
                 ImmediateValue::NegatedIntLiteral(value, radix) => sb_appendf(output, c!("-%s/base%d"), value, radix as u64),
-                ImmediateValue::CharLiteral(value) => sb_appendf(output, c!("'%s'"), value),
+                ImmediateValue::CharLiteral(value, count) => sb_appendf(output, c!("'%s'(%d bytes)"), value, count),
                 ImmediateValue::Name(name) => sb_appendf(output, c!("%s"), name),
                 ImmediateValue::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
             };
