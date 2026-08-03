@@ -35,6 +35,7 @@ pub enum Arg {
     CharLiteral(*const c_char, usize),
     IntLiteral(*const c_char, Radix),
     DataOffset(usize),
+    String(*const c_char, usize),
 }
 
 #[derive(Clone, Copy)]
@@ -130,6 +131,7 @@ pub enum ImmediateValue {
     CharLiteral(*const c_char, usize),
     NegatedIntLiteral(*const c_char, Radix),
     DataOffset(usize),
+    String(*const c_char, usize),
 }
 
 #[derive(Clone, Copy)]
@@ -163,6 +165,36 @@ pub unsafe fn dump_arg_call(arg: Arg, output: *mut String_Builder) {
 
 }
 
+pub unsafe fn dump_string_common(raw_string: *mut String_Builder, value: *const c_char, count: usize) {
+    for i in 0..count {
+        let byte = *value.add(i);
+        match byte {
+            v if v == '\0' as c_char => sb_appendf(raw_string, c!("*0")),
+            v if v == '\n' as c_char => sb_appendf(raw_string, c!("*n")),
+            v if v == '\t' as c_char => sb_appendf(raw_string, c!("*t")),
+            v if v == '\r' as c_char => sb_appendf(raw_string, c!("*r")),
+            v if v == '\'' as c_char => sb_appendf(raw_string, c!("*'")),
+            v if v == '*' as c_char => sb_appendf(raw_string, c!("**")),
+            v => sb_appendf(raw_string, c!("%c"), v as c_int),
+        };
+    }
+    da_append(raw_string, 0);
+}
+
+pub unsafe fn dump_string(output: *mut String_Builder, value: *const c_char, count: usize) -> c_int {
+    let mut raw_string: String_Builder = zeroed();
+    dump_string_common(&mut raw_string, value, count);
+    let res = sb_appendf(output, c!("\"%s\""), raw_string.items);
+    res
+}
+
+pub unsafe fn dump_char_literal(output: *mut String_Builder, value: *const c_char, count: usize) -> c_int {
+    let mut raw_string: String_Builder = zeroed();
+    dump_string_common(&mut raw_string, value, count);
+    let res = sb_appendf(output, c!("'%s'"), raw_string.items);
+    res
+}
+
 pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
     match arg {
         Arg::External(name)     => sb_appendf(output, c!("%s"), name),
@@ -170,26 +202,10 @@ pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
         Arg::RefAutoVar(index)  => sb_appendf(output, c!("ref auto[%zu]"), index),
         Arg::RefExternal(name)  => sb_appendf(output, c!("ref %s"), name),
         Arg::IntLiteral(value, radix)     => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
-        Arg::CharLiteral(value, count)     => {
-            let mut raw_string: String_Builder = zeroed();
-            for i in 0..count {
-                let byte = *value.add(i);
-                match byte {
-                    v if v == '\0' as c_char => sb_appendf(&mut raw_string, c!("*0")),
-                    v if v == '\n' as c_char => sb_appendf(&mut raw_string, c!("*n")),
-                    v if v == '\t' as c_char => sb_appendf(&mut raw_string, c!("*t")),
-                    v if v == '\r' as c_char => sb_appendf(&mut raw_string, c!("*r")),
-                    v if v == '\'' as c_char => sb_appendf(&mut raw_string, c!("*'")),
-                    v if v == '*' as c_char => sb_appendf(&mut raw_string, c!("**")),
-                    v => sb_appendf(&mut raw_string, c!("%c"), v as c_int),
-                };
-            }
-            da_append(&mut raw_string, 0);
-            let res = sb_appendf(output, c!("'%s'"), raw_string.items);
-            res
-        }
+        Arg::CharLiteral(value, count)     => dump_char_literal(output, value, count),
         Arg::AutoVar(index)     => sb_appendf(output, c!("auto[%zu]"), index),
         Arg::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
+        Arg::String(value, count) => dump_string(output, value, count),
         Arg::Bogus              => unreachable!("bogus-amogus")
     };
 }
@@ -331,9 +347,10 @@ pub unsafe fn dump_globals(output: *mut String_Builder, globals: *const [Global]
             match *global.values.items.add(j) {
                 ImmediateValue::IntLiteral(value, radix) => sb_appendf(output, c!("%s/base%d"), value, radix as u64),
                 ImmediateValue::NegatedIntLiteral(value, radix) => sb_appendf(output, c!("-%s/base%d"), value, radix as u64),
-                ImmediateValue::CharLiteral(value, count) => sb_appendf(output, c!("'%s'(%d bytes)"), value, count),
+                ImmediateValue::CharLiteral(value, count)     => dump_char_literal(output, value, count),
                 ImmediateValue::Name(name) => sb_appendf(output, c!("%s"), name),
                 ImmediateValue::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
+                ImmediateValue::String(value, count) => dump_string(output, value, count),
             };
         }
         sb_appendf(output, c!("\n"));

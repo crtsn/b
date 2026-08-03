@@ -40,16 +40,14 @@ pub unsafe fn parse_int_literal_to_u64(value: *const c_char, radix: Radix) -> Op
 #[must_use]
 pub unsafe fn parse_char_literal_to_u64_le(char_literal: *const c_char, count: usize) -> Option<u64> {
   let word_bytes = 8;
-
   let mut result: u64 = 0;
   for i in 0..count {
       if count > word_bytes {
           return None;
       }
 
-      let shift_amount = i * 8;
-      let bytes = CStr::from_ptr(char_literal).to_bytes();
-      let char_byte = bytes[i];
+      let shift_amount = (count - 1 - i) * 8;
+      let char_byte = *char_literal.add(i);
       let shifted_char = (char_byte as u64) << shift_amount;
 
       let Some(r) = result.checked_add(shifted_char) else {
@@ -84,8 +82,6 @@ pub unsafe fn parse_int_literal_to_u16(value: *const c_char, radix: Radix) -> Re
 #[must_use]
 pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
     let word_bytes = 2;
-
-    fprintf(stderr(), c!("parse_char_literal_to_u16_be: \"%s\", %u\n"), char_literal, count as c_uint);
     let mut result: u16 = 0;
     for i in 0..count {
         if count > word_bytes {
@@ -101,23 +97,20 @@ pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char, count: u
         };
         result = r;
     }
-    fprintf(stderr(), c!("parse_char_literal_to_u16_be: 0x%X\n"), result as c_uint);
     Ok(result)
 }
 
 #[must_use]
 pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
   let word_bytes = 2;
-
-  fprintf(stderr(), c!("parse_char_literal_to_u16_le: \"%s\", %u\n"), char_literal, count as c_uint);
-
   let mut result: u16 = 0;
   for i in 0..count {
       if count > word_bytes {
           return Err(());
       }
 
-      let shift_amount = i * 8;
+      // let shift_amount = i * 8;
+      let shift_amount = (count - 1 - i) * 8;
       let char_byte = *char_literal.add(i);
       let shifted_char = (char_byte as u16) << shift_amount;
 
@@ -126,7 +119,6 @@ pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char, count: u
       };
       result = r;
   }
-  fprintf(stderr(), c!("parse_char_literal_to_u16_le: 0x%X\n"), result as c_uint);
   Ok(result)
 }
 

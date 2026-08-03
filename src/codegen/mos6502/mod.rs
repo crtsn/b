@@ -263,6 +263,7 @@ pub struct Assembler {
     pub op_labels: Array<Label>,
     pub externals: Array<External>,
     pub addresses: Array<u16>,
+    pub strings: Array<(usize, usize, *const c_char, usize)>,
     pub code_start: u16, // load address of code section
     pub frame_sz: u8, // current stack frame size in bytes, because 6502 has no base register
     pub string_arena: Arena, // used for inline assembly labels
@@ -311,7 +312,8 @@ pub unsafe fn instr16(out: *mut String_Builder, inst: Instr, mode: AddrMode, v: 
     Some(())
 }
 
-pub unsafe fn add_reloc(out: *mut String_Builder, kind: RelocationKind, asm: *mut Assembler) {
+pub unsafe fn add_reloc(out: *mut String_Builder, kind: RelocationKind, asm: *mut Assembler) -> usize {
+    let reloc = (*asm).relocs.count;
     da_append(&mut (*asm).relocs, Relocation {
         kind,
         addr: (*out).count as u16
@@ -321,6 +323,7 @@ pub unsafe fn add_reloc(out: *mut String_Builder, kind: RelocationKind, asm: *mu
     } else {
         write_byte(out, 0);
     }
+    reloc
 }
 
 pub unsafe fn create_address_label(asm: *mut Assembler) -> usize {
@@ -426,6 +429,13 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, out: *mut String_Builder, asm: *mut A
             add_reloc(out, RelocationKind::DataOffset{off: offset as u16, byte: Byte::Low}, asm);
             instr0(out, LDY, IMM, p)?;
             add_reloc(out, RelocationKind::DataOffset{off: offset as u16, byte: Byte::High}, asm);
+        },
+        Arg::String(string, count) => {
+            instr0(out, LDA, IMM, p)?;
+            let low_reloc = add_reloc(out, RelocationKind::DataOffset{off: 0, byte: Byte::Low}, asm);
+            instr0(out, LDY, IMM, p)?;
+            let high_reloc = add_reloc(out, RelocationKind::DataOffset{off: 0, byte: Byte::High}, asm);
+            da_append(&mut (*asm).strings, (low_reloc, high_reloc, string, count));
         },
         Arg::Bogus => unreachable!("bogus-amogus"),
     };
@@ -885,7 +895,6 @@ pub unsafe fn generate_function(name: *const c_char, loc: Loc, params_count: usi
         da_append(&mut (*asm).addresses, 0);
     }
 
-    fprintf(stderr(), c!("FUNC: %s: auto_vars_count: %d\n"), name, auto_vars_count);
     // TODO: use params_count, auto_vars_count
     assert!(auto_vars_count*2 < 256);
     let stack_size = (auto_vars_count * 2) as u8;
@@ -1613,10 +1622,16 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
                     }
                     write_word(out, value)
                 }
-                ImmediateValue::Name(name) =>
-                    add_reloc(out, RelocationKind::External{name, byte: Byte::Both, offset: 0, relative: false}, asm),
+                ImmediateValue::Name(name) => {
+                    add_reloc(out, RelocationKind::External{name, byte: Byte::Both, offset: 0, relative: false}, asm);
+                }
                 ImmediateValue::DataOffset(offset) => {
                     add_reloc(out, RelocationKind::DataOffset{off: offset as u16, byte: Byte::Both}, asm);
+                }
+                ImmediateValue::String(string, count) => {
+                    let low_reloc = add_reloc(out, RelocationKind::DataOffset{off: 0, byte: Byte::Low}, asm);
+                    let high_reloc = add_reloc(out, RelocationKind::DataOffset{off: 0, byte: Byte::High}, asm);
+                    da_append(&mut (*asm).strings, (low_reloc, high_reloc, string, count));
                 }
             }
         }
@@ -1626,6 +1641,39 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
         }
     }
     Some(())
+}
+
+pub unsafe fn generate_strings(out: *mut String_Builder, file_data_section_start: u16, asm: *mut Assembler) {
+    for i in 0..(*asm).strings.count {
+        let string = *(*asm).strings.items.add(i);
+        let mut raw_string: String_Builder = zeroed();
+        dump_string_common(&mut raw_string, string.2, string.3);
+        if (*out).count%2 == 1 {
+            write_byte(out, 0);
+        }
+        let Relocation{kind: RelocationKind::DataOffset{ off: ref mut low_reloc, .. }, ..} = &mut *(*asm).relocs.items.add(string.0) else {
+            unreachable!();
+        };
+        let Relocation{kind: RelocationKind::DataOffset{ off: ref mut high_reloc, .. }, ..} = &mut *(*asm).relocs.items.add(string.1) else {
+            unreachable!();
+        };
+        *low_reloc = (*out).count as u16 - file_data_section_start ;
+        *high_reloc = (*out).count as u16 - file_data_section_start;
+        for word in 0..string.3/2 {
+            let low = *string.2.add(word * 2 + 1) as u8;
+            write_byte(out, low);
+            let high = *string.2.add(word * 2) as u8;
+            write_byte(out, high);
+        }
+        if string.3%2 == 1 {
+            let low = *string.2.add(string.3/2*2) as u8;
+            write_byte(out, 4); // '*e'
+            write_byte(out, low);
+        } else {
+            write_byte(out, 4); // '*e'
+            write_byte(out, 0);
+        }
+    }
 }
 
 pub unsafe fn generate_data_section(out: *mut String_Builder, data: *const [u8]) {
@@ -1732,8 +1780,10 @@ pub unsafe fn generate_program(
     generate_extrns(out, da_slice((*p).extrns), da_slice((*p).funcs), da_slice((*p).globals), da_slice((*p).asm_funcs), p)?;
 
     let data_start = (*gen).load_offset as u16 + (*out).count as u16;
+    let file_data_section_start = (*out).count as u16;
     generate_data_section(out, da_slice((*p).data));
     generate_globals(out, da_slice((*p).globals), &mut asm, p)?;
+    generate_strings(out, file_data_section_start, &mut asm);
 
     log(Log_Level::INFO, c!("Generated size: 0x%x"), (*out).count as c_uint);
     apply_relocations(out, data_start, &mut asm);

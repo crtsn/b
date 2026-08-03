@@ -410,6 +410,7 @@ pub unsafe fn parse_string_into_storage(l: *mut Lexer, delim: c_char) -> Option<
                 };
                 let x = match x {
                     x if x == '0'   as c_char => '\0' as c_char,
+                    x if x == 'e'   as c_char => 4 as c_char, // EOT in ascii, as said in bref
                     x if x == 'n'   as c_char => '\n' as c_char,
                     x if x == 't'   as c_char => '\t' as c_char,
                     x if x == 'r'   as c_char => '\r' as c_char,

@@ -145,6 +145,26 @@ pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_
                 sb_appendf(output, c!("    add %s, %s, %zu\n"), reg, reg, offset);
             }
         }
+        Arg::String(string, count) => {
+            unreachable!();
+            // match os {
+            //     Os::Linux => {
+            //         sb_appendf(output, c!("    adrp %s, .dat\n"), reg);
+            //         sb_appendf(output, c!("    add  %s, %s, :lo12:.dat\n"), reg, reg);
+            //     }
+            //     Os::Darwin => {
+            //         sb_appendf(output, c!("    adrp %s, .dat@PAGE\n"), reg);
+            //         sb_appendf(output, c!("    add  %s, %s, .dat@PAGEOFF\n"), reg, reg);
+            //     }
+            //     Os::Windows => missingf!(loc, c!("AArch64 is not supported on windows\n")),
+            // }
+
+            // if offset >= 4095 {
+            //     missingf!(loc, c!("Data offsets bigger than 4095 are not supported yet\n"));
+            // } else if offset > 0 {
+            //     sb_appendf(output, c!("    add %s, %s, %zu\n"), reg, reg, offset);
+            // }
+        }
         Arg::Bogus => unreachable!("bogus-amogus")
     };
     Some(())
@@ -511,9 +531,13 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                         Os::Windows => {
                             todo!("AArch64 is not supported on windows\n");
                         }
-                    },
+                    }
                     ImmediateValue::DataOffset(offset) => {
                         sb_appendf(output, c!("    .quad .dat+%zu\n"), offset);
+                    }
+                    ImmediateValue::String(string, count) => {
+                        unreachable!();
+                        // sb_appendf(output, c!("    .quad .dat+%zu\n"), offset);
                     }
                 }
             }

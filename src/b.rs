@@ -61,7 +61,6 @@ use crate::codegen_common::{parse_int_literal_to_u64, parse_char_literal_to_u64_
 use crate::errors::bump_error_count;
 
 pub unsafe fn add_libb_files(path: *const c_char, target: *const c_char, inputs: &mut Array<*const c_char>, c: *mut Compiler) -> Option<bool> {
-    fprintf(stderr(), c!("add_libb_files: %s for %s\n"), path, target);
     if !file_exists(path)? {
         // why is rust like this.
         return Some(false);
@@ -357,21 +356,6 @@ pub unsafe fn allocate_auto_var(t: *mut AutoVarsAtor) -> usize {
     (*t).count
 }
 
-
-pub unsafe fn compile_string(string: *const c_char, c: *mut Compiler) -> usize {
-    let offset = (*c).program.data.count;
-    let string_len = strlen(string);
-    da_append_many(&mut (*c).program.data, slice::from_raw_parts(string as *const u8, string_len));
-    // TODO: Strings in B are not NULL-terminated.
-    // They are terminated with symbol '*e' ('*' is escape character akin to '\' in C) which according to the
-    // spec is called just "end-of-file" without any elaboration on what its value is. Maybe it had a specific
-    // value on PDP that was a common knowledge at the time? In any case that breaks compatibility with
-    // libc. While the language is still in development we gonna terminate it with 0. We will make it
-    // "spec complaint" later.
-    da_append(&mut (*c).program.data, 0); // NULL-terminator
-    offset
-}
-
 pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Option<(Arg, bool)> {
     lexer::get_next_valid_token(l)?;
     let arg = match (*l).token {
@@ -412,7 +396,7 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 Arg::External(name) =>  Some((Arg::RefExternal(name), false)),
                 Arg::AutoVar(index) =>  Some((Arg::RefAutoVar(index), false)),
                 Arg::Bogus          =>  Some((Arg::Bogus, false)), // Reference of a bogus value is a bogus value
-                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::String(_, _) |Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
         Token::PlusPlus => {
@@ -463,8 +447,9 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
             }
         }
         Token::String => {
-            let offset = compile_string((*l).string, c);
-            Some((Arg::DataOffset(offset), false))
+            let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+            memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+            Some((Arg::String(value as *const c_char, (*l).string_storage.count - 1), false))
         }
         _ => {
             diagf!((*l).loc, c!("Expected start of a primary expression but got %s\n"), lexer::display_token((*l).token));
@@ -542,7 +527,7 @@ pub unsafe fn compile_binop(lhs: Arg, rhs: Arg, binop: Binop, loc: Loc, c: *mut 
         Arg::Bogus => {
             // Bogus value does not compile to anything
         }
-        Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+        Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::String(_, _) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
     }
 }
 
@@ -610,7 +595,7 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
                 Arg::Bogus => {
                     // Bogus value does not compile to anything
                 }
-                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
+                Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::String(_, _) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
         }
 
@@ -1246,7 +1231,11 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                                     let value = arena::strdup(&mut (*c).arena, (*l).string);
                                     ImmediateValue::IntLiteral(value, (*l).radix)
                                 }
-                                Token::String => ImmediateValue::DataOffset(compile_string((*l).string, c)),
+                                Token::String => {
+                                    let value = arena::alloc(&mut (*c).arena, (*l).string_storage.count - 1);
+                                    memcpy(value, (*l).string as *const c_void, (*l).string_storage.count - 1);
+                                    ImmediateValue::String(value as *const c_char, (*l).string_storage.count - 1)
+                                }
                                 Token::ID => {
                                     let name = arena::strdup(&mut (*c).arena, (*l).string);
                                     let scope = da_last_mut(&mut (*c).vars).expect("There should be always at least the global scope");
@@ -1460,10 +1449,6 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
     let mut c: Compiler = zeroed();
     c.historical = *historical;
     let executable_directory = dirname(temp_running_executable_path());
-
-    fprintf(stderr(), c!("target: %s\n"), target.codegen_name);
-    fprintf(stderr(), c!("executable_directory: %s\n"), executable_directory);
-
     if (*linker).count > 0 {
         let mut s: Shlex = zeroed();
         for i in 0..(*linker).count {

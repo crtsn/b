@@ -31,6 +31,7 @@ pub struct Assembler {
     pub label_count: usize,
     pub named_labels: Array<NamedLabel>,
     pub data_section_label: usize,
+    pub strings: Array<(usize, *const c_char, usize)>,
     pub resolved_addresses: Array<u16>, // maps label index to its byte offset
     pub patches: Array<Patch>,
     pub error_count: *mut usize, 
@@ -263,6 +264,7 @@ pub unsafe fn generate_program(
     generate_extrns(da_slice((*p).extrns), da_slice((*p).funcs), da_slice((*p).asm_funcs), da_slice((*p).globals), p)?;
     generate_data_section(output, da_slice((*p).data), &mut assembler);
     generate_globals(output, da_slice((*p).globals), &mut assembler, p)?;
+    generate_strings(output, &mut assembler);
 
     apply_patches(output, &mut assembler, p)?;
 
@@ -806,7 +808,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
                 value = bump_error_count((*p).error_count).map(|()| 0)?;
             }
             write_lit2(output, value);
-        },
+        }
         Arg::CharLiteral(char_literal, count) => {
             let value: u16;
             if let Ok(v) = parse_char_literal_to_u16_be(char_literal, count) {
@@ -816,13 +818,20 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
                 value = bump_error_count((*p).error_count).map(|()| 0)?;
             }
             write_lit2(output, value);
-        },
+        }
         Arg::DataOffset(offset) => {
             write_op(output, UxnOp::LIT2);
             
             write_label_abs(output, (*assembler).data_section_label, assembler, 0);
             write_lit2(output, offset as u16);
             write_op(output, UxnOp::ADD2);
+        }
+        Arg::String(string, count) => {
+            write_op(output, UxnOp::LIT2);
+            
+            let label = create_label(assembler);
+            da_append(&mut (*assembler).strings, (label, string, count));
+            write_label_abs(output, label, assembler, 0);
         }
         Arg::RefAutoVar(index) => {
             write_lit_ldz2(output, BP);
@@ -937,6 +946,11 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                 ImmediateValue::DataOffset(offset) => {
                     write_label_abs(output, (*assembler).data_section_label, assembler, offset);
                 }
+                ImmediateValue::String(string, count) => {
+                    let label = create_label(assembler);
+                    da_append(&mut (*assembler).strings, (label, string, count));
+                    write_label_abs(output, label, assembler, 0);
+                }
             }
         }
         for _ in global.values.count..global.minimum_size {
@@ -944,6 +958,32 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
         }
     }
     Some(())
+}
+
+pub unsafe fn generate_strings(output: *mut String_Builder, assembler: *mut Assembler) {
+    for i in 0..(*assembler).strings.count {
+        let string = *(*assembler).strings.items.add(i);
+        let mut raw_string: String_Builder = zeroed();
+        dump_string_common(&mut raw_string, string.1, string.2);
+        if (*output).count%2 == 1 {
+            write_byte(output, 0);
+        }
+        link_label(assembler, string.0, (*output).count);
+        for word in 0..string.2/2 {
+            let low = *string.1.add(word * 2) as u8;
+            write_byte(output, low);
+            let high = *string.1.add(word * 2 + 1) as u8;
+            write_byte(output, high);
+        }
+        if string.2%2 == 1 {
+            let low = *string.1.add(string.2/2*2) as u8;
+            write_byte(output, low);
+            write_byte(output, 4); // '*e'
+        } else {
+            write_byte(output, 4); // '*e'
+            write_byte(output, 0);
+        }
+    }
 }
 
 pub unsafe fn generate_data_section(output: *mut String_Builder, data: *const [u8], assembler: *mut Assembler) {
