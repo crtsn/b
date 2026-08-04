@@ -804,7 +804,14 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
             if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
                 value = v;
             } else {
-                diagf!(loc, c!("ERROR: uxn: constant %s out of range for 16 bits\n"), int_literal);
+                let prefix = match radix {
+                    Radix::Dec => c!(""),
+                    Radix::Oct => c!("0"),
+                    Radix::Hex => c!("0x"),
+                    _ => unreachable!()
+                };
+                let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 16 bits\n"), prefix);
+                diagf!(loc, fmt_str, int_literal);
                 value = bump_error_count((*p).error_count).map(|()| 0)?;
             }
             write_lit2(output, value);
@@ -1350,12 +1357,13 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
     match l.token {
         Token::EOF => { /* Allow empty asm line, not sure if useful */ }
         Token::ID => {
+            let lname = strdup(l.string);
             // label or opcode
             lexer::get_token(&mut l)?;
             match l.token {
                 Token::Colon => {
                     // label
-                    link_label(assembler, get_or_create_label_by_name(assembler, l.string), (*output).count);
+                    link_label(assembler, get_or_create_label_by_name(assembler, lname), (*output).count);
                     lexer::get_token(&mut l)?;
                     match l.token {
                         Token::ID => { /* must be an an opcode */ }

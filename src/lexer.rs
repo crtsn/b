@@ -543,6 +543,8 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
 
     let start_of_number = (*l).parse_point;
     if skip_prefix(l, c!("0x")) {
+        (*l).token = Token::IntLit;
+        (*l).string_storage.count = 0;
         let value = parse_number(l, Radix::Hex);
         if (*l).historical {
             let end_point = (*l).parse_point;
@@ -551,8 +553,6 @@ pub unsafe fn get_token(l: *mut Lexer) -> Option<()> {
             (*l).parse_point = end_point;
             bump_error_count((*l).error_count)?;
         }
-        (*l).token = Token::IntLit;
-        (*l).string_storage.count = 0;
         return value;
     }
 

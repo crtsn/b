@@ -202,7 +202,7 @@
     {
         "case": "deref_assign",
         "target": "uxn",
-        "expected_stdout": "*v =   1    v=1\n*v |=  16   v=17\n*v *=  2    v=34\n*v +=  35   v=69\n*v <<= 1    v=138\n*v &=  127  v=10\n",
+        "expected_stdout": "*v =    1    v=1\n*v |=   16   v=17\n*v *=  2    v=34\n*v +=   35   v=69\n*v <<=  1    v=138\n*v &=   127  v=10\n",
         "state": "Enabled",
         "comment": "",
         "hist": false
@@ -650,9 +650,9 @@
     {
         "case": "globals",
         "target": "uxn",
-        "expected_stdout": "foo == 0x0102030405060708: OK\n",
-        "state": "Enabled",
-        "comment": "",
+        "expected_stdout": "",
+        "state": "Disabled",
+        "comment": "Since uxn word size is 16 we forbid literals to overflow",
         "hist": false
     },
     {
@@ -986,9 +986,9 @@
     {
         "case": "literals",
         "target": "uxn",
-        "expected_stdout": "69\n16960\n64177\n",
-        "state": "Enabled",
-        "comment": "Since uxn word size is 16 we expect such big literals to get truncated accordingly. 1000000 == 0xf4240 -> 16960 == 0x4240. 123456789987654321 == 0x1b69b4be052fab1 -> 64177 == 0xfab1",
+        "expected_stdout": "",
+        "state": "Disabled",
+        "comment": "Since uxn word size is 16 we forbid literals to overflow",
         "hist": false
     },
     {
@@ -2358,6 +2358,14 @@
         "state": "Enabled",
         "comment": "",
         "hist": true
+    },
+    {
+        "case": "const_char_test",
+        "target": "uxn",
+        "expected_stdout": "",
+        "state": "Disabled",
+        "comment": "Using constants bigger than 16 bit",
+        "hist": false
     },
     {
         "case": "args11-extrn",

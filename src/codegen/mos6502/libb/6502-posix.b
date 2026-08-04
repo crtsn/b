@@ -100,13 +100,6 @@ _rem(a, b) {
     return (rsign ? -a : a);
 }
 
-strlen(s) {
-    auto n;
-    n = 0;
-    while (char(s, n)) n++;
-    return (n);
-}
-
 toupper(c) {
     if ('a' <= c & c <= 'z') return (c - 'a' + 'A');
     return (c);
