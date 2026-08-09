@@ -333,12 +333,13 @@ pub unsafe fn push_opcode(opcode: Op, loc: Loc, c: *mut Compiler) {
     da_append(&mut (*c).func_body, OpWithLocation {opcode, loc, scope_events_count: (*c).func_scope_events.count });
 }
 
+/// Allocator of Auto Vars
 #[derive(Clone, Copy)]
 pub struct AutoVarsAtor {
+    /// How many autovars currently allocated
     pub count: usize,
+    /// Maximum allocated autovars throughout the function body
     pub max: usize,
-    pub free_list: Array<usize>,
-    pub is_temp: Array<bool>,
 }
 
 pub unsafe fn allocate_label_index(c: *mut Compiler) -> usize {
@@ -347,63 +348,12 @@ pub unsafe fn allocate_label_index(c: *mut Compiler) -> usize {
     index
 }
 
-unsafe fn is_temp_get(t: *const AutoVarsAtor, slot: usize) -> bool {
-    if slot == 0 || slot > (*t).is_temp.count { return false; }
-    *(*t).is_temp.items.add(slot - 1)
-}
-
-unsafe fn is_temp_set(t: *mut AutoVarsAtor, slot: usize, value: bool) {
-    while (*t).is_temp.count < slot {
-        da_append(&mut (*t).is_temp, false);
-    }
-    *(*t).is_temp.items.add(slot - 1) = value;
-}
-
-pub unsafe fn reserve_auto_var(t: *mut AutoVarsAtor) -> usize {
+pub unsafe fn allocate_auto_var(t: *mut AutoVarsAtor) -> usize {
     (*t).count += 1;
-    if (*t).count > (*t).max { (*t).max = (*t).count; }
-    is_temp_set(t, (*t).count, false);
+    if (*t).count > (*t).max {
+        (*t).max = (*t).count;
+    }
     (*t).count
-}
-
-pub unsafe fn allocate_temp(t: *mut AutoVarsAtor) -> usize {
-    if (*t).free_list.count > 0 {
-        (*t).free_list.count -= 1;
-        let slot = *(*t).free_list.items.add((*t).free_list.count);
-        is_temp_set(t, slot, true);
-        return slot;
-    }
-    (*t).count += 1;
-    if (*t).count > (*t).max { (*t).max = (*t).count; }
-    is_temp_set(t, (*t).count, true);
-    (*t).count
-}
-
-pub unsafe fn free_temp(t: *mut AutoVarsAtor, index: usize) {
-    if is_temp_get(t, index) {
-        is_temp_set(t, index, false);
-        da_append(&mut (*t).free_list, index);
-    }
-}
-
-pub unsafe fn maybe_free_arg(t: *mut AutoVarsAtor, arg: Arg) {
-    match arg {
-        Arg::AutoVar(i) | Arg::Deref(i) => free_temp(t, i),
-        _ => {}
-    }
-}
-
-pub unsafe fn restore_auto_vars_count(t: *mut AutoVarsAtor, saved: usize) {
-    (*t).count = saved;
-    let mut w = 0;
-    for r in 0..(*t).free_list.count {
-        let e = *(*t).free_list.items.add(r);
-        if e < saved {
-            *(*t).free_list.items.add(w) = e;
-            w += 1;
-        }
-    }
-    (*t).free_list.count = w;
 }
 
 pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Option<(Arg, bool)> {
@@ -416,23 +366,20 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
         }
         Token::Not => {
             let (arg, _) = compile_primary_expression(l, c)?;
-            let result = allocate_temp(&mut (*c).auto_vars_ator);
+            let result = allocate_auto_var(&mut (*c).auto_vars_ator);
             push_opcode(Op::UnaryNot{result, arg}, (*l).loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, arg);
             Some((Arg::AutoVar(result), false))
         }
         Token::Mul => {
             let (arg, _) = compile_primary_expression(l, c)?;
-            let index = allocate_temp(&mut (*c).auto_vars_ator);
+            let index = allocate_auto_var(&mut (*c).auto_vars_ator);
             push_opcode(Op::AutoAssign {index, arg}, (*l).loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, arg);
             Some((Arg::Deref(index), true))
         }
         Token::Minus => {
             let (arg, _) = compile_primary_expression(l, c)?;
-            let index = allocate_temp(&mut (*c).auto_vars_ator);
+            let index = allocate_auto_var(&mut (*c).auto_vars_ator);
             push_opcode(Op::Negate {result: index, arg}, (*l).loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, arg);
             Some((Arg::AutoVar(index), false))
         }
         Token::And => {
@@ -522,10 +469,8 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                 let (offset, _) = compile_expression(l, c)?;
                 get_and_expect_token_but_continue(l, c, Token::CBracket)?;
 
-                let result = allocate_temp(&mut (*c).auto_vars_ator);
+                let result = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::Index {result, arg, offset}, (*l).loc, c);
-                maybe_free_arg(&mut (*c).auto_vars_ator, arg);
-                maybe_free_arg(&mut (*c).auto_vars_ator, offset);
 
                 Some((Arg::Deref(result), true))
             }
@@ -536,10 +481,9 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                     return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
                 }
 
-                let pre = allocate_temp(&mut (*c).auto_vars_ator);
+                let pre = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::AutoAssign {index: pre, arg}, loc, c);
                 compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Plus, loc, c);
-                maybe_free_arg(&mut (*c).auto_vars_ator, arg);
 
                 Some((Arg::AutoVar(pre), false))
             }
@@ -550,10 +494,9 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
                     return bump_error_count(&mut (*c).error_count).map(|()| (Arg::Bogus, false));
                 }
 
-                let pre = allocate_temp(&mut (*c).auto_vars_ator);
+                let pre = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::AutoAssign {index: pre, arg}, loc, c);
                 compile_binop(arg, Arg::IntLiteral(c!("1"), Radix::Dec), Binop::Minus, loc, c);
-                maybe_free_arg(&mut (*c).auto_vars_ator, arg);
 
                 Some((Arg::AutoVar(pre), false))
             }
@@ -569,25 +512,20 @@ pub unsafe fn compile_primary_expression(l: *mut Lexer, c: *mut Compiler) -> Opt
 pub unsafe fn compile_binop(lhs: Arg, rhs: Arg, binop: Binop, loc: Loc, c: *mut Compiler) {
     match lhs {
         Arg::Deref(index) => {
-            let tmp = allocate_temp(&mut (*c).auto_vars_ator);
+            let tmp = allocate_auto_var(&mut (*c).auto_vars_ator);
             push_opcode(Op::Binop {binop, index: tmp, lhs, rhs}, loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
             push_opcode(Op::Store {index, arg: Arg::AutoVar(tmp)}, loc, c);
-            free_temp(&mut (*c).auto_vars_ator, tmp);
         },
         Arg::External(name) => {
-            let tmp = allocate_temp(&mut (*c).auto_vars_ator);
+            let tmp = allocate_auto_var(&mut (*c).auto_vars_ator);
             push_opcode(Op::Binop {binop, index: tmp, lhs, rhs}, loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
-            push_opcode(Op::ExternalAssign {name, arg: Arg::AutoVar(tmp)}, loc, c);
-            free_temp(&mut (*c).auto_vars_ator, tmp);
+            push_opcode(Op::ExternalAssign {name, arg: Arg::AutoVar(tmp)}, loc, c)
         }
         Arg::AutoVar(index) => {
-            push_opcode(Op::Binop {binop, index, lhs, rhs}, loc, c);
-            maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
+            push_opcode(Op::Binop {binop, index, lhs, rhs}, loc, c)
         }
         Arg::Bogus => {
-            maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
+            // Bogus value does not compile to anything
         }
         Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::String(_, _) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
     }
@@ -610,10 +548,8 @@ pub unsafe fn compile_binop_expression(l: *mut Lexer, c: *mut Compiler, preceden
 
                 let (rhs, _) = compile_binop_expression(l, c, precedence + 1)?;
 
-                let index = allocate_temp(&mut (*c).auto_vars_ator);
+                let index = allocate_auto_var(&mut (*c).auto_vars_ator);
                 push_opcode(Op::Binop {binop, index, lhs, rhs}, (*l).loc, c);
-                maybe_free_arg(&mut (*c).auto_vars_ator, lhs);
-                maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
                 lhs = Arg::AutoVar(index);
 
                 lvalue = false;
@@ -649,19 +585,15 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
             match lhs {
                 Arg::Deref(index) => {
                     push_opcode(Op::Store {index, arg: rhs}, binop_loc, c);
-                    maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
-                    free_temp(&mut (*c).auto_vars_ator, index);
                 }
                 Arg::External(name) => {
                     push_opcode(Op::ExternalAssign {name, arg: rhs}, binop_loc, c);
-                    maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
                 }
                 Arg::AutoVar(index) => {
                     push_opcode(Op::AutoAssign {index, arg: rhs}, binop_loc, c);
-                    maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
                 }
                 Arg::Bogus => {
-                    maybe_free_arg(&mut (*c).auto_vars_ator, rhs);
+                    // Bogus value does not compile to anything
                 }
                 Arg::IntLiteral(_, _) | Arg::CharLiteral(_, _) | Arg::DataOffset(_) | Arg::String(_, _) | Arg::RefAutoVar(_) | Arg::RefExternal(_) => unreachable!(),
             }
@@ -674,15 +606,13 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
     }
 
     if (*l).token == Token::Question {
-        let result = allocate_temp(&mut (*c).auto_vars_ator);
+        let result = allocate_auto_var(&mut (*c).auto_vars_ator);
 
         let else_label = allocate_label_index(c);
         push_opcode(Op::JmpIfNotLabel{label: else_label, arg: lhs}, (*l).loc, c);
-        maybe_free_arg(&mut (*c).auto_vars_ator, lhs);
 
         let (if_true, _) = compile_expression(l, c)?;
         push_opcode(Op::AutoAssign {index: result, arg: if_true}, (*l).loc, c);
-        maybe_free_arg(&mut (*c).auto_vars_ator, if_true);
         let out_label = allocate_label_index(c);
         push_opcode(Op::JmpLabel{label: out_label}, (*l).loc, c);
 
@@ -691,7 +621,6 @@ pub unsafe fn compile_assign_expression(l: *mut Lexer, c: *mut Compiler) -> Opti
         push_opcode(Op::Label{label: else_label}, (*l).loc, c);
         let (if_false, _) = compile_expression(l, c)?;
         push_opcode(Op::AutoAssign {index: result, arg: if_false}, (*l).loc, c);
-        maybe_free_arg(&mut (*c).auto_vars_ator, if_false);
         push_opcode(Op::Label{label: out_label}, (*l).loc, c);
 
         Some((Arg::AutoVar(result), false))
@@ -758,14 +687,8 @@ pub unsafe fn compile_block(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
         }
     }
 
-    let result = allocate_temp(&mut (*c).auto_vars_ator);
+    let result = allocate_auto_var(&mut (*c).auto_vars_ator);
     push_opcode(Op::Funcall {result, fun, args}, (*l).loc, c);
-    if let Arg::AutoVar(i) | Arg::Deref(i) = fun {
-        free_temp(&mut (*c).auto_vars_ator, i);
-    }
-    for i in 0..args.count {
-        maybe_free_arg(&mut (*c).auto_vars_ator, *args.items.add(i));
-    }
     Some(Arg::AutoVar(result))
 }
 
@@ -821,7 +744,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             scope_push(&mut (*c).vars);
             let saved_auto_vars_count = (*c).auto_vars_ator.count;
             compile_block(l, c)?;
-            restore_auto_vars_count(&mut (*c).auto_vars_ator, saved_auto_vars_count);
+            (*c).auto_vars_ator.count = saved_auto_vars_count;
             scope_pop(&mut (*c).vars);
             Some(())
         }
@@ -840,7 +763,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 let mut index = 0;
                 if get_and_expect_token(l, c, Token::ID)? {
                     let name = arena::strdup(&mut (*c).arena, (*l).string);
-                    index = reserve_auto_var(&mut (*c).auto_vars_ator);
+                    index = allocate_auto_var(&mut (*c).auto_vars_ator);
                     declare_var(c, name, (*l).loc, Storage::Auto {index})?;
 
                     lexer::get_next_valid_token(l)?;
@@ -881,7 +804,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                         missingf!((*l).loc, c!("It's unclear how to compile automatic vector of size 0\n"));
                     }
                     for _ in 0..size {
-                        reserve_auto_var(&mut (*c).auto_vars_ator);
+                        allocate_auto_var(&mut (*c).auto_vars_ator);
                     }
                     // TODO: Here we assume the stack grows down. Should we
                     //   instead find a way for the target to decide that?
@@ -899,8 +822,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                    let (cond, _) = compile_expression(l, c)?;
                    let else_label = allocate_label_index(c);
                    push_opcode(Op::JmpIfNotLabel{label: else_label, arg: cond}, (*l).loc, c);
-                   maybe_free_arg(&mut (*c).auto_vars_ator, cond);
-                restore_auto_vars_count(&mut (*c).auto_vars_ator, saved_auto_vars_count);
+                (*c).auto_vars_ator.count = saved_auto_vars_count;
             get_and_expect_token_but_continue(l, c, Token::CParen)?;
 
             compile_statement(l, c)?;
@@ -927,7 +849,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             get_and_expect_token_but_continue(l, c, Token::OParen)?;
                 let saved_auto_vars_count = (*c).auto_vars_ator.count;
                     let (arg, _) = compile_expression(l, c)?;
-                restore_auto_vars_count(&mut (*c).auto_vars_ator, saved_auto_vars_count);
+                (*c).auto_vars_ator.count = saved_auto_vars_count;
             get_and_expect_token_but_continue(l, c, Token::CParen)?;
 
             let out_label = allocate_label_index(c);
@@ -948,7 +870,6 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 get_and_expect_token_but_continue(l, c, Token::CParen)?;
                 get_and_expect_token_but_continue(l, c, Token::SemiColon)?;
                 push_opcode(Op::Return {arg: Some(arg)}, (*l).loc, c);
-                maybe_free_arg(&mut (*c).auto_vars_ator, arg);
             }
             Some(())
         }
@@ -1030,7 +951,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
 
             let switch_loc = (*l).loc;
             let (value, _) = compile_expression(l, c)?;
-            let cond = allocate_temp(&mut (*c).auto_vars_ator);
+            let cond = allocate_auto_var(&mut (*c).auto_vars_ator);
             let label = allocate_label_index(c);
             da_append(&mut (*c).switch_stack, Switch {label, value, cond});
             push_opcode(Op::JmpLabel {label}, switch_loc, c);
@@ -1041,7 +962,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             push_opcode(Op::Label{label: (*switch_frame).label}, (*l).loc, c);
             (*c).switch_stack.count -= 1;
 
-            restore_auto_vars_count(&mut (*c).auto_vars_ator, saved_auto_vars_count);
+            (*c).auto_vars_ator.count = saved_auto_vars_count;
 
             Some(())
         }
@@ -1059,9 +980,8 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
             }
             (*l).parse_point = saved_point;
             let saved_auto_vars_count = (*c).auto_vars_ator.count;
-            let (expr, _) = compile_expression(l, c)?;
-            maybe_free_arg(&mut (*c).auto_vars_ator, expr);
-            restore_auto_vars_count(&mut (*c).auto_vars_ator, saved_auto_vars_count);
+            compile_expression(l, c)?;
+            (*c).auto_vars_ator.count = saved_auto_vars_count;
             get_and_expect_token_but_continue(l, c, Token::SemiColon)?;
             Some(())
         }
@@ -1194,7 +1114,7 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                                 if let Some(true) = get_and_expect_token(l, c, Token::ID) {
                                     let name = arena::strdup(&mut (*c).arena, (*l).string);
                                     let name_loc = (*l).loc;
-                                    let index = reserve_auto_var(&mut (*c).auto_vars_ator);
+                                    let index = allocate_auto_var(&mut (*c).auto_vars_ator);
                                     declare_var(c, name, name_loc, Storage::Auto{index})?;
                                     params_count += 1;
                                     lexer::get_next_valid_token(l)?;
@@ -1250,10 +1170,7 @@ pub unsafe fn compile_program(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                         (*c).func_gotos.count = 0;
                         (*c).func_scope_events = zeroed();
                         (*c).func_blocks_count = 0;
-                        (*c).auto_vars_ator.count = 0;
-                        (*c).auto_vars_ator.max = 0;
-                        (*c).auto_vars_ator.free_list.count = 0;
-                        (*c).auto_vars_ator.is_temp.count = 0;
+                        (*c).auto_vars_ator = zeroed();
                         (*c).op_label_count = 0;
                     }
                     Token::Asm => { // Assembly function definition

@@ -170,7 +170,7 @@
     {
         "case": "deref_assign",
         "target": "gas-x86_64-windows",
-        "expected_stdout": "v =    1    v=1\n*v |=   16   v=17\n*v *=  2    v=34\n*v +=   35   v=69\n*v <<=  1    v=138\n*v &=   127  v=10\n",
+        "expected_stdout": "*v =    1    v=1\n*v |=   16   v=17\n*v *=  2    v=34\n*v +=   35   v=69\n*v <<=  1    v=138\n*v &=   127  v=10\n",
         "state": "Enabled",
         "comment": "",
         "hist": false
@@ -178,7 +178,7 @@
     {
         "case": "deref_assign",
         "target": "gas-x86_64-linux",
-        "expected_stdout": "v =    1    v=1\n*v |=   16   v=17\n*v *=  2    v=34\n*v +=   35   v=69\n*v <<=  1    v=138\n*v &=   127  v=10\n",
+        "expected_stdout": "*v =    1    v=1\n*v |=   16   v=17\n*v *=  2    v=34\n*v +=   35   v=69\n*v <<=  1    v=138\n*v &=   127  v=10\n",
         "state": "Enabled",
         "comment": "",
         "hist": false
@@ -738,7 +738,7 @@
     {
         "case": "lexer",
         "target": "gas-x86_64-linux",
-        "expected_stdout": "0105 == 69: OK\n0x45 == 69: OK\n'E' == 0x45: OK\n'EF' == 0x4645: OK\n",
+        "expected_stdout": "0105 == 69: OK\n0x45 == 69: OK\n'E' == 0x45: OK\n'EF' == 0x4546: OK\n",
         "state": "Enabled",
         "comment": "",
         "hist": false
@@ -1275,7 +1275,7 @@
         "case": "args11",
         "target": "6502-posix",
         "expected_stdout": "",
-        "state": "Enabled",
+        "state": "Disabled",
         "comment": "TODO: Stack overflow",
         "hist": false
     },

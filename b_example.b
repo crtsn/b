@@ -80,6 +80,14 @@ BIG_NEG -65535;                                                       /* */
 main()
 {
     W = &0[1];                                                        /* */
+	printn(1, 16, 0);
+	putchar('*n');                                                 /* */
+	printn(1 << 1, 16, 0);
+	putchar('*n');                                                 /* */
+	printn(1 >> 1, 16, 0);
+	putchar('*n');                                                 /* */
+	printn(1 >> 1, 10, 1);
+	putchar('*n');                                                 /* */
 	printn(BIG_POS, 10, 1);                                         /* */
 	putchar('*n');                                                 /* */
 	printn(BIG_POS, 10, 0);                                         /* */
@@ -92,8 +100,9 @@ main()
 	putchar('*n');                                                 /* */
 	printn(BIG_NEG, 16, 0);                                         /* */
 	putchar('*n');                                                 /* */
-	/* printn(077777, 16, 0);                                         /* */
-	/* putchar('*n');                                                 /* */
+	printf("%X*n", 040502);
+	printn(077777, 16, 0);                                         /* */
+	putchar('*n');                                                 /* */
 	/* printn(077777/2, 16, 0);                                       /* */
 	/* putchar('*n');                                                 /* */
 	/* printn(077777/4, 16, 0);                                       /* */
