@@ -308,7 +308,7 @@ pub unsafe fn dump_op(op: OpWithLocation, output: *mut String_Builder) {
 }
 
 pub unsafe fn dump_function(name: *const c_char, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
-    sb_appendf(output, c!("%s(%zu, %zu):\n"), name, params_count, auto_vars_count);
+    sb_appendf(output, c!("%s(params: %zu, auto_vars: %zu):\n"), name, params_count, auto_vars_count);
     for i in 0..body.len() {
         dump_op((*body)[i], output)
     }

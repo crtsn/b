@@ -12,7 +12,7 @@ use crate::lexer;
 use crate::lexer::{Token, loc};
 use crate::targets::TargetAPI;
 use crate::params::*;
-use crate::codegen_common::{parse_int_literal_to_u8, parse_char_literal_to_u8, parse_int_literal_to_u16, parse_char_literal_to_u16_be};
+use crate::codegen_common::{parse_int_literal_to_u8, parse_char_literal_to_u8, parse_int_literal_to_u16, parse_char_literal_to_u16};
 
 // UXN memory map
 // 0x0000 - 0x00ff - zero page
@@ -818,7 +818,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
         }
         Arg::CharLiteral(char_literal, count) => {
             let value: u16;
-            if let Ok(v) = parse_char_literal_to_u16_be(char_literal, count) {
+            if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: uxn: constant '%s' out of range for 16 bits\n"), char_literal);
@@ -931,7 +931,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                             Radix::Hex => c!("0x"),
                             _ => unreachable!()
                         };
-                        let fmt_str = temp_sprintf(c!("ERROR: uxn: constant %s%%s out of range for 16 bits\n"), prefix);
+                        let fmt_str = temp_sprintf(c!("ERROR: uxn: constant -%s%%s out of range for 16 bits\n"), prefix);
                         diagf!(*global.value_locs.items.add(j), fmt_str, int_literal);
                         value = bump_error_count((*p).error_count).map(|()| 0)?;
                     }
@@ -939,7 +939,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                 }
                 ImmediateValue::CharLiteral(char_literal, count) => {
                     let value: u16;
-                    if let Ok(v) = parse_char_literal_to_u16_be(char_literal, count) {
+                    if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
                         value = v;
                     } else {
                         diagf!(*global.value_locs.items.add(j), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), char_literal);
@@ -970,8 +970,6 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
 pub unsafe fn generate_strings(output: *mut String_Builder, assembler: *mut Assembler) {
     for i in 0..(*assembler).strings.count {
         let string = *(*assembler).strings.items.add(i);
-        let mut raw_string: String_Builder = zeroed();
-        dump_string_common(&mut raw_string, string.1, string.2);
         if (*output).count%2 == 1 {
             write_byte(output, 0);
         }
@@ -1448,7 +1446,7 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                     // immediate number literal
                     if has_short_immediate(opcode) {
                         let value: u16;
-                        if let Ok(v) = parse_char_literal_to_u16_be(l.string, l.string_storage.count - 1) {
+                        if let Ok(v) = parse_char_literal_to_u16(l.string, l.string_storage.count - 1) {
                             value = v;
                         } else {
                             diagf!(loc(&mut l), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), l.string);

@@ -80,28 +80,7 @@ pub unsafe fn parse_int_literal_to_u16(value: *const c_char, radix: Radix) -> Re
 }
 
 #[must_use]
-pub unsafe fn parse_char_literal_to_u16_be(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
-    let word_bytes = 2;
-    let mut result: u16 = 0;
-    for i in 0..count {
-        if count > word_bytes {
-            return Err(());
-        }
-
-        let shift_amount = (count - 1 - i) * 8;
-        let char_byte = *char_literal.add(i);
-        let shifted_char = (char_byte as u16) << shift_amount;
-
-        let Some(r) = result.checked_add(shifted_char) else {
-            return Err(());
-        };
-        result = r;
-    }
-    Ok(result)
-}
-
-#[must_use]
-pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
+pub unsafe fn parse_char_literal_to_u16(char_literal: *const c_char, count: usize) -> Result<u16, ()> {
   let word_bytes = 2;
   let mut result: u16 = 0;
   for i in 0..count {
@@ -109,7 +88,6 @@ pub unsafe fn parse_char_literal_to_u16_le(char_literal: *const c_char, count: u
           return Err(());
       }
 
-      // let shift_amount = i * 8;
       let shift_amount = (count - 1 - i) * 8;
       let char_byte = *char_literal.add(i);
       let shifted_char = (char_byte as u16) << shift_amount;

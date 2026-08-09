@@ -18,7 +18,7 @@ use crate::lexer::{is_identifier_start, is_identifier};
 use crate::arena::{self, Arena};
 use crate::targets::TargetAPI;
 use crate::params::*;
-use crate::codegen_common::{parse_int_literal_to_u16, parse_char_literal_to_u16_le};
+use crate::codegen_common::{parse_int_literal_to_u16, parse_char_literal_to_u16};
 
 // TODO: does this have to be a macro?
 macro_rules! instr_enum {
@@ -414,7 +414,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, out: *mut String_Builder, asm: *mut A
         }
         Arg::CharLiteral(char_literal, count) => {
             let value: u16;
-            if let Ok(v) = parse_char_literal_to_u16_le(char_literal, count) {
+            if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: mos6502: Character constant '%s' out of range for 16 bits\n"), char_literal);
@@ -1368,7 +1368,7 @@ pub unsafe fn generate_function(name: *const c_char, loc: Loc, params_count: usi
                     },
                     Arg::CharLiteral(char_literal, count) => {
                         let value: u16;
-                        if let Ok(v) = parse_char_literal_to_u16_le(char_literal, count) {
+                        if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
                             value = v;
                         } else {
                             diagf!(op.loc, c!("ERROR: mos6502: function address '%s' out of range for 16 bits\n"), char_literal);
@@ -1606,7 +1606,7 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
                             Radix::Hex => c!("0x"),
                             _ => unreachable!()
                         };
-                        let fmt_str = temp_sprintf(c!("ERROR: mos6502: constant %s%%s out of range for 16 bits\n"), prefix);
+                        let fmt_str = temp_sprintf(c!("ERROR: mos6502: constant -%s%%s out of range for 16 bits\n"), prefix);
                         diagf!(*global.value_locs.items.add(j), fmt_str, int_literal);
                         value = bump_error_count((*p).error_count).map(|()| 0)?;
                     }
@@ -1614,7 +1614,7 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
                 }
                 ImmediateValue::CharLiteral(char_literal, count) => {
                     let value: u16;
-                    if let Ok(v) = parse_char_literal_to_u16_le(char_literal, count) {
+                    if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
                         value = v;
                     } else {
                         diagf!(*global.value_locs.items.add(j), c!("ERROR: mos6502: char constant '%s' out of range for 16 bits\n"), char_literal);

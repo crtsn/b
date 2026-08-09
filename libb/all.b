@@ -76,7 +76,7 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12) {
     arg = &x1;
 
     c = char(str, i);
-    while ((c != '*e') & (c != 0)) {
+    while (c != '*e') {
         if (c == '%') {
             i++;
             c = char(str, i);
@@ -86,7 +86,7 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12) {
                 c = char(str, i);
             }
 
-            if ((c == 0) | (c == '*e')) {
+            if (c == '*e') {
                 return;
             } else if (c == '%') {
                 putchar('%');
@@ -110,13 +110,12 @@ printf(str, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12) {
                 putchar(*arg);
                 arg = arg - &0[1];
             } else if (c == 's') {
-                j = 0;
-                c = char(*arg, j);
-                while ((c != '*e') & (c != 0)) {
-                    putchar(c);
-                    j++;
-                    c = char(*arg, j);
-                }
+                c = char(*arg, 0);
+				while (c != '*e') {
+				    putchar(c);
+				    *arg = *arg + 1;
+				    c = char(*arg, 0);
+				}
                 arg = arg - &0[1];
             } else {
                 putchar('%');
