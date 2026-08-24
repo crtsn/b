@@ -801,7 +801,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
         }
         Arg::IntLiteral(int_literal, radix) => {
             let value: u16;
-            if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+            if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                 value = v;
             } else {
                 let prefix = match radix {
@@ -817,7 +817,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, output: *mut String_Builder, assemble
         }
         Arg::CharLiteral(char_literal, count) => {
             let value: u16;
-            if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
+            if let Some(v) = parse_char_literal_to_u16(char_literal, count) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: uxn: constant '%s' out of range for 16 bits\n"), char_literal);
@@ -897,7 +897,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
             match *global.values.items.add(j) {
                 ImmediateValue::IntLiteral(int_literal, radix) => {
                     let value: u16;
-                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                    if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                         value = v;
                     } else {
                         let prefix = match radix {
@@ -913,7 +913,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                 }
                 ImmediateValue::NegatedIntLiteral(int_literal, radix) => {
                     let value: u16;
-                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                    if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                         value = !v + 1;
                     } else {
                         let prefix = match radix {
@@ -929,7 +929,7 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
                 }
                 ImmediateValue::CharLiteral(char_literal, count) => {
                     let value: u16;
-                    if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
+                    if let Some(v) = parse_char_literal_to_u16(char_literal, count) {
                         value = v;
                     } else {
                         diagf!(*global.value_locs.items.add(j), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), char_literal);
@@ -1391,7 +1391,7 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                     // immediate number literal
                     if has_short_immediate(opcode) {
                         let value: u16;
-                        if let Ok(v) = parse_int_literal_to_u16(l.string, l.radix) {
+                        if let Some(v) = parse_int_literal_to_u16(l.string, l.radix) {
                             value = v;
                         } else {
                             let prefix = match l.radix {
@@ -1406,7 +1406,7 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                         write_short(output, value);
                     } else {
                         let value: u8;
-                        if let Ok(v) = parse_int_literal_to_u8(l.string, l.radix) {
+                        if let Some(v) = parse_int_literal_to_u8(l.string, l.radix) {
                             value = v;
                         } else {
                             let prefix = match l.radix {
@@ -1425,7 +1425,7 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                     // immediate number literal
                     if has_short_immediate(opcode) {
                         let value: u16;
-                        if let Ok(v) = parse_char_literal_to_u16(l.string, l.string_storage.count - 1) {
+                        if let Some(v) = parse_char_literal_to_u16(l.string, l.string_storage.count - 1) {
                             value = v;
                         } else {
                             diagf!(loc(&mut l), c!("ERROR: uxn: char constant '%s' out of range for 16 bits\n"), l.string);
@@ -1434,7 +1434,7 @@ pub unsafe fn process_asm_statement(output: *mut String_Builder, asm_stmt: AsmSt
                         write_short(output, value);
                     } else {
                         let value: u8;
-                        if let Ok(v) = parse_char_literal_to_u8(l.string, l.string_storage.count - 1) {
+                        if let Some(v) = parse_char_literal_to_u8(l.string, l.string_storage.count - 1) {
                             value = v;
                         } else {
                             diagf!(loc(&mut l), c!("ERROR: uxn: char constant '%s' out of range for 8 bits\n"), l.string);

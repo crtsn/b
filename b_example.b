@@ -22,7 +22,7 @@ mkfile "b_example.wasm"
 
 SCRIPT_DIR=$( dirname -- "$( readlink -f -- "$0"; )"; )
 cd $SCRIPT_DIR
-export PATH="$PWD/build:$PWD/../posix6502/build:$PWD/../uxncli/bin:$PWD/../wasm3/build:$PATH" 
+export PATH="$PWD/build:$PWD/../posix6502/build:$PWD/../uxncli/bin:$PWD/../wasm3/build:$PATH"
 statuses=()
 b -hist $0 -q -t 6502-posix -ir >ir.log
 
@@ -37,16 +37,19 @@ if [ -z ${statuses[1]} ]; then
 	xxd b_example.6502 >>mos.bin.log
 fi
 b -hist $0 -q -t uxn || statuses[2]=$?
-if [ -z ${statuses[1]} ]; then 
+if [ -z ${statuses[2]} ]; then 
 	echo "b_example.rom:" >uxn.bin.log
 	xxd b_example.rom >>uxn.bin.log
 fi
-# b -hist $0 -q -t wasm32 || statuses[3]=$?
-# if [ -z ${statuses[1]} ]; then 
-# 	echo "b_example.wasm:" >wasm.bin.log
-# 	xxd b_example.wasm >>wasm.bin.log
-# fi
-# exit 0
+b -hist $0 -q -t wasm32-wasi || statuses[3]=$?
+if [ -z ${statuses[3]} ]; then 
+	echo "b_example.wasm:" >wasm.bin.log
+	xxd b_example.wasm >>wasm.bin.log
+	echo -e "\nb_example.wasm DUMP:" >>wasm.bin.log
+	wasm-tools dump b_example.wasm >>wasm.bin.log
+	echo -e "\nb_example.wasm OBJDUMP:" >>wasm.bin.log
+	wasm-objdump -s -x -d b_example.wasm >>wasm.bin.log
+fi
 
 for status in "${statuses[@]}"; do
 	(exit $status)
@@ -61,8 +64,8 @@ posix6502 b_example.6502 >mos.log 2>&1 || statuses[1]=$?
 printf "mos RET: %d\n" ${statuses[1]}
 uxncli b_example.rom >uxn.log 2>&1 || statuses[2]=$?
 printf "uxn RET: %d\n" ${statuses[2]}
-# wasm3 b_example.wasm >wasm.log 2>&1 || statuses[3]=$?
-# printf "wasm RET: %d\n" ${statuses[3]}
+wasm3 b_example.wasm >wasm.log 2>&1 || statuses[3]=$?
+printf "wasm RET: %d\n" ${statuses[3]}
 exit 0
 */
 
@@ -72,76 +75,76 @@ C 041101, 042103, 043105;                                             /* */
 D 040502, 041504, 042506;                                             /* */
 VEC[4] 040502, C, D;                                                  /* */
 DELIM2 'D2';                                                          /* */
-CHAR 'CH';                                                            /* */
-CHAR2 'C';                                                            /* */
-DELIM3 'D3';                                                          /* */
-DELIM0 "D0";                                                          /* */
-STRING "S";                                                           /* */
-DELIM1 "D1";                                                          /* */
-EMPTY "";                                                             /* */
+/* CHAR 'CH';                                                            /* */
+/* CHAR2 'C';                                                            /* */
+/* DELIM3 'D3';                                                          /* */
+/* DELIM0 "D0";                                                          /* */
+/* STRING "S";                                                           /* */
+/* DELIM1 "D1";                                                          /* */
+/* EMPTY "";                                                             /* */
 W;                                                                    /* */
-BIG_POS 65000;                                                        /* */
+/* BIG_POS 65000;                                                        /* */
 /* 
    Ok, makes sense to allow full range for negative numbers: 
    for 16 bit: -65536..65536
    since we don't have a bitwise not operator
 */
-BIG_NEG -65535;                                                       /* */
-SMALL "ABCDEF";                                                       /* */
+/* BIG_NEG -65535;                                                       /* */
+/* SMALL "ABCDEF";                                                       /* */
 
 main()
 {
     W = &0[1];                                                        /* */
 	printn('AB', 16, 0);                                              /* */
 	putchar('*n');                                                    /* */
-	printf("---*n");                                                    /* */
+	printf("---*n");                                                  /* */
 
     auto label;                                                       /* */
     label = "RF";
-	printn(label[0], 16, 0);                                             /* */
+	printn(label[0], 16, 0);                                          /* */
 	putchar('*n');                                                    /* */
-	printn(label[0] == 'RF', 16, 0);                                             /* */
+	printn(label[0] == 'RF', 16, 0);                                  /* */
 	putchar('*n');                                                    /* */
-	printn(label[1], 16, 0);                                           /* */
+	printn(label[1], 16, 0);                                          /* */
 	putchar('*n');                                                    /* */
-	printn(label[1] == '*e', 16, 0);                                             /* */
+	printn(label[1] == '*e', 16, 0);                                  /* */
 	putchar('*n');                                                    /* */
-	lchar(label, 1, 'M');                                          /* */
-	printn(label[0], 16, 0);                                           /* */
+	lchar(label, 1, 'M');                                             /* */
+	printn(label[0], 16, 0);                                          /* */
 	putchar('*n');                                                    /* */
-	lchar(label, 2, 'U');                                          /* */
-	printn(label[1], 16, 0);                                           /* */
-	lchar(label, 3, '*e');                                          /* */
-	printn(label[1], 16, 0);                                           /* */
+	lchar(label, 2, 'U');                                             /* */
+	printn(label[1], 16, 0);                                          /* */
+	lchar(label, 3, '*e');                                            /* */
+	printn(label[1], 16, 0);                                          /* */
 	putchar('*n');                                                    /* */
-	printf("---*n");                                                    /* */
+	printf("---*n");                                                  /* */
 
-	auto i;                                                        /* */
-	auto cur;                                                      /* */
-	auto temp_label 8;                                             /* */
+	auto i;                                                           /* */
+	auto cur;                                                         /* */
+	auto temp_label 8;                                                /* */
     temp_label[0] = '*e';
-	printn(temp_label[0], 16, 0);                                           /* */
+	printn(temp_label[0], 16, 0);                                     /* */
 	putchar('*n');                                                    /* */
-	printf("---*n");                                                    /* */
-	i = 0;                                                         /* */
-	cur = char(label, i);                                          /* */
-	printn(cur, 16, 0);                                           /* */
+	printf("---*n");                                                  /* */
+	i = 0;                                                            /* */
+	cur = char(label, i);                                             /* */
+	printn(cur, 16, 0);                                               /* */
 	putchar('*n');                                                    /* */
 	while(cur != '*e')
 	{
-	    printf("lchar(temp_label, %d): %X*n", i, cur);                                                    /* */
+	    printf("lchar(temp_label, %d): %X*n", i, cur);                /* */
 		lchar(temp_label, i, cur);                                    /* */
-	    printf("char(temp_label, %d): %X*n", i, char(temp_label, i));                                                    /* */
-        i++;                                                       /* */
-        cur = char(label, i);                                      /* */
+	    printf("char(temp_label, %d): %X*n", i, char(temp_label, i)); /* */
+        i++;                                                          /* */
+        cur = char(label, i);                                         /* */
 	    printn(cur, 16, 0);                                           /* */
-	    putchar('*n');                                                    /* */
+	    putchar('*n');                                                /* */
 	}
-	printf("---*n");                                                    /* */
-	printn(temp_label[0], 16, 0);                                           /* */
+	printf("---*n");                                                  /* */
+	printn(temp_label[0], 16, 0);                                     /* */
 	putchar('*n');                                                    /* */
-	printf("---*n");                                                    /* */
-	lchar(temp_label, i, cur);                                     /* */
+	printf("---*n");                                                  /* */
+	lchar(temp_label, i, cur);                                        /* */
 	printf("LABEL: %s*n", label);
 	printf("TEMP_LABEL: %s*n", temp_label);
 
@@ -296,7 +299,7 @@ main()
 	/* printf("---*n");                                               /* */
 	/* print_addr_deref("&c", &CHAR);                                 /* */
 	/* print_addr_deref("s", STRING);                                 /* */
-	print_three_derefs("A", A);                                    /* */
+	/* print_three_derefs("A", A);                                    /* */
 	/* print_three_derefs("&A[1]", &A[1]);                            /* */
 	/* print_three_derefs("&B", &B);                                  /* */
 	/* print_three_derefs("&C", &C);                                  /* */

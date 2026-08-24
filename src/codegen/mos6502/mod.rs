@@ -403,7 +403,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, out: *mut String_Builder, asm: *mut A
         Arg::RefAutoVar(index) => load_auto_var_ref(out, index, asm, p)?,
         Arg::IntLiteral(int_literal, radix) => {
             let value: u16;
-            if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+            if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: mos6502: constant %s out of range for 16 bits\n"), int_literal);
@@ -414,7 +414,7 @@ pub unsafe fn load_arg(arg: Arg, loc: Loc, out: *mut String_Builder, asm: *mut A
         }
         Arg::CharLiteral(char_literal, count) => {
             let value: u16;
-            if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
+            if let Some(v) = parse_char_literal_to_u16(char_literal, count) {
                 value = v;
             } else {
                 diagf!(loc, c!("ERROR: mos6502: Character constant '%s' out of range for 16 bits\n"), char_literal);
@@ -1351,7 +1351,7 @@ pub unsafe fn generate_function(name: *const c_char, loc: Loc, params_count: usi
                     },
                     Arg::IntLiteral(int_literal, radix) => {
                         let value: u16;
-                        if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                        if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                             value = v;
                         } else {
                             diagf!(op.loc, c!("ERROR: mos6502: function address %s out of range for 16 bits\n"), int_literal);
@@ -1361,7 +1361,7 @@ pub unsafe fn generate_function(name: *const c_char, loc: Loc, params_count: usi
                     },
                     Arg::CharLiteral(char_literal, count) => {
                         let value: u16;
-                        if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
+                        if let Some(v) = parse_char_literal_to_u16(char_literal, count) {
                             value = v;
                         } else {
                             diagf!(op.loc, c!("ERROR: mos6502: function address '%s' out of range for 16 bits\n"), char_literal);
@@ -1573,7 +1573,7 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
             match *global.values.items.add(j) {
                 ImmediateValue::IntLiteral(int_literal, radix) => {
                     let value: u16;
-                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                    if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                         value = v;
                     } else {
                         let prefix = match radix {
@@ -1589,7 +1589,7 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
                 }
                 ImmediateValue::NegatedIntLiteral(int_literal, radix) => {
                     let value: u16;
-                    if let Ok(v) = parse_int_literal_to_u16(int_literal, radix) {
+                    if let Some(v) = parse_int_literal_to_u16(int_literal, radix) {
                         value = !v + 1;
                     } else {
                         let prefix = match radix {
@@ -1605,7 +1605,7 @@ pub unsafe fn generate_globals(out: *mut String_Builder, globals: *mut [Global],
                 }
                 ImmediateValue::CharLiteral(char_literal, count) => {
                     let value: u16;
-                    if let Ok(v) = parse_char_literal_to_u16(char_literal, count) {
+                    if let Some(v) = parse_char_literal_to_u16(char_literal, count) {
                         value = v;
                     } else {
                         diagf!(*global.value_locs.items.add(j), c!("ERROR: mos6502: char constant '%s' out of range for 16 bits\n"), char_literal);

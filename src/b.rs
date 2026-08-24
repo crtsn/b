@@ -57,7 +57,7 @@ use ir::*;
 use time::Instant;
 use shlex::*;
 use params::*;
-use crate::codegen_common::{parse_int_literal_to_u64, parse_char_literal_to_u64_le};
+use crate::codegen_common::{parse_int_literal_to_u64, parse_char_literal_to_u64};
 use crate::errors::bump_error_count;
 
 pub unsafe fn add_libb_files(path: *const c_char, target: *const c_char, inputs: &mut Array<*const c_char>, c: *mut Compiler) -> Option<bool> {
@@ -801,7 +801,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                         value
                     } else {
                         let value: u64;
-                        if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
+                        if let Some(v) = parse_char_literal_to_u64((*l).string, (*l).string_storage.count - 1) {
                             value = v;
                         } else {
                             diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
@@ -914,7 +914,7 @@ pub unsafe fn compile_statement(l: *mut Lexer, c: *mut Compiler) -> Option<()> {
                 value
             } else {
                 let value: u64;
-                if let Some(v) = parse_char_literal_to_u64_le((*l).string, (*l).string_storage.count - 1) {
+                if let Some(v) = parse_char_literal_to_u64((*l).string, (*l).string_storage.count - 1) {
                     value = v;
                 } else {
                     diagf!(loc(l), c!("ERROR: Character constant overflow\n"));
