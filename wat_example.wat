@@ -6,7 +6,7 @@ mkfile "wat_example.wasm"
 mkfile "wat_example.bin.log"
 
 export PATH="$PWD/../wabt/build:$PWD/../wasm3/build:$PATH" 
-sed -n '/^\;\; WAT_START/,$p' "$0" | wat2wasm --enable-annotations - -o wat_example.wasm || status=$?
+sed -n '/^\;\; WAT_START/,$p' "$0" | wat2wasm - -o wat_example.wasm || status=$?
 
 if [ -z $status ]; then
 	echo "wat_example.wasm:" >wat_example.bin.log

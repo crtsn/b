@@ -22,7 +22,13 @@ mkfile "b_example.wasm"
 
 SCRIPT_DIR=$( dirname -- "$( readlink -f -- "$0"; )"; )
 cd $SCRIPT_DIR
-export PATH="$PWD/build:$PWD/../posix6502/build:$PWD/../uxncli/bin:$PWD/../wasm3/build:$PATH"
+# links for all tools used in this script:
+# https://github.com/bext-lang/posix6502
+# https://git.sr.ht/~rabbits/uxncli
+# for wasm-objdump (clone with submodules depth=1): https://github.com/webassembly/wabt
+# https://github.com/wasm3/wasm3
+# cargo install wasm-tools
+export PATH="$PWD/build:$PWD/../posix6502/build:$PWD/../uxncli/bin:$PWD/../wasm3/build:$PWD/../wabt/build:$PATH"
 statuses=()
 b -hist $0 -q -t 6502-posix -ir >ir.log
 
